@@ -157,7 +157,9 @@ class Notifier:
         faults = self.state["faults"]
         if bad:
             since = self.fault_since.setdefault(key, now)
-            if not faults.get(key) and (now - since).total_seconds() >= hold_s:
+            # 兩台電腦每天約 07:00 自動重開機：06:45–07:25 之間先不報，07:25 後仍異常才推播
+            reboot = (6, 45) <= (now.hour, now.minute) < (7, 25)
+            if not faults.get(key) and not reboot and (now - since).total_seconds() >= hold_s:
                 faults[key] = now.strftime("%H:%M")
                 self._push("❗ " + msg_bad, force=True)
         else:
