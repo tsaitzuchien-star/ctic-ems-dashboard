@@ -170,9 +170,12 @@ class Notifier:
         day = now.date().isoformat()
         days = self.state["days"]
         if ems and ems.get("updated", "")[:10] == day:
+            live = bool(mag and mag.get("mode") == "LIVE" and not mag.get("off"))
+            prev_live = (days.get(day) or {}).get("live", False)
             days[day] = {"peak": ems.get("today_peak_kw"), "peak_at": ems.get("today_peak_at"),
-                         "kwh": ems.get("today_kwh"), "mag": ems.get("mag_today")}
-        for k in sorted(days)[:-3]:
+                         "kwh": ems.get("today_kwh"), "mag": ems.get("mag_today"), "live": live or prev_live,
+                         "wd": now.weekday() < 5}
+        for k in sorted(days)[:-60]:              # 保留 60 天，給「節電成效」比較人工時期
             days.pop(k)
         hm = now.strftime("%H:%M")
         done = self.state["summary"]
@@ -183,7 +186,8 @@ class Notifier:
             if d:
                 m = d.get("mag") or {}
                 self._push(f"昨日摘要 {y[5:]}\n最高 15 分鐘需量 {_f(d['peak'], 1)} kW（{d['peak_at'] or '—'}）\n"
-                           f"用電 {_f(d['kwh'])} 度\n磁浮運轉 {_f(m.get('run_hours'), 1)} h・{_f(m.get('kwh'))} 度", force=True)
+                           f"用電 {_f(d['kwh'])} 度\n磁浮運轉 {_f(m.get('run_hours'), 1)} h・{_f(m.get('kwh'))} 度\n"
+                           + self._savings(y, d), force=True)
             else:
                 self._save()
         if hm >= SUMMARY_PM and done.get("pm") != day:
@@ -198,6 +202,24 @@ class Notifier:
                 self._push("\n".join(lines), force=True)
             else:
                 self._save()
+
+    def _savings(self, day, d):
+        """節電成效：自動控制當天的磁浮度數 vs 人工時期同類日（平日／假日）最近 10 天平均。"""
+        if not d.get("live"):
+            return "節電成效：尚未由自動控制接手（試跑／人工）"
+        days = self.state["days"]
+        ref = [v["mag"]["kwh"] for k, v in sorted(days.items()) if k < day and not v.get("live")
+               and v.get("wd") == d.get("wd") and (v.get("mag") or {}).get("kwh")][-10:]
+        live_days = [(k, v) for k, v in sorted(days.items()) if k <= day and v.get("live") and (v.get("mag") or {}).get("kwh")]
+        mk = (d.get("mag") or {}).get("kwh")
+        if len(ref) < 3 or mk is None:
+            return "節電成效：人工時期基準資料不足（需至少 3 天），暫不計算"
+        base = sum(ref) / len(ref)
+        save = base - mk
+        cum = sum(base - v["mag"]["kwh"] for k, v in live_days if v.get("wd") == d.get("wd"))
+        return (f"節電成效（磁浮，對比人工時期 {len(ref)} 天平均 {_f(base)} 度）\n"
+                f"昨日{'省' if save >= 0 else '多用'} {_f(abs(save))} 度（{_f(abs(save) / base * 100, 1)}%）\n"
+                f"接手以來累計 {_f(cum)} 度・約 {_f(cum * 4)} 元\n※ 未做天氣校正，僅供參考")
 
     def tick(self, now, live_ok, snap, ac, mag, ems):
         if not self.enabled:
