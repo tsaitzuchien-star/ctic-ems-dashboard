@@ -30,22 +30,23 @@
         </div>
     </header>
 
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-8">
-        <div class="glass-card p-5 border-l-4 border-l-blue-400 flex items-center gap-4">
-            <div class="hidden lg:block p-3 bg-blue-500/20 rounded-full"><i class="fa-solid fa-building text-2xl text-blue-400"></i></div>
-            <div><p class="text-slate-400 text-xs md:text-sm">建檔總空間數</p><p class="text-2xl md:text-3xl font-bold text-white">361</p></div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
+        <div class="glass-card px-4 py-3 border-l-4 border-l-blue-400 flex items-center gap-3 h-20">
+            <i class="fa-solid fa-building text-xl text-blue-400 hidden sm:block"></i>
+            <div><p class="text-slate-400 text-xs">建檔總空間數</p><p class="text-xl font-bold text-white leading-tight">361</p></div>
         </div>
-        <div class="glass-card p-5 border-l-4 border-l-emerald-400 flex items-center gap-4">
-            <div class="hidden lg:block p-3 bg-emerald-500/20 rounded-full"><i class="fa-solid fa-server text-2xl text-emerald-400"></i></div>
-            <div><p class="text-slate-400 text-xs md:text-sm">列管配電盤總數</p><p class="text-2xl md:text-3xl font-bold text-white">137</p></div>
+        <div class="glass-card px-4 py-3 border-l-4 border-l-emerald-400 flex items-center gap-3 h-20">
+            <i class="fa-solid fa-server text-xl text-emerald-400 hidden sm:block"></i>
+            <div><p class="text-slate-400 text-xs">列管配電盤總數</p><p class="text-xl font-bold text-white leading-tight">137</p></div>
         </div>
-        <div class="glass-card p-5 border-l-4 border-l-amber-400 flex items-center gap-4">
-            <div class="hidden lg:block p-3 bg-amber-500/20 rounded-full"><i class="fa-solid fa-plug-circle-bolt text-2xl text-amber-400"></i></div>
-            <div><p class="text-slate-400 text-xs md:text-sm">總計監測迴路</p><p class="text-2xl md:text-3xl font-bold text-white">2007</p></div>
+        <div class="glass-card px-4 py-3 border-l-4 border-l-amber-400 flex items-center gap-3 h-20">
+            <i class="fa-solid fa-plug-circle-bolt text-xl text-amber-400 hidden sm:block"></i>
+            <div><p class="text-slate-400 text-xs">總計監測迴路</p><p class="text-xl font-bold text-white leading-tight">2007</p></div>
         </div>
-        <div class="glass-card p-3 relative h-24 md:h-auto flex items-center justify-center">
-             <canvas id="typeChart"></canvas>
+        <div class="glass-card px-3 py-2 h-20 relative">
+            <canvas id="typeChart"></canvas>
         </div>
+    </div>
     </div>
 
     <div class="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-6 border-b border-slate-700 pb-4 sticky top-0 bg-[#0f172a]/90 backdrop-blur-md z-10 py-4 px-2 -mx-2 rounded-lg">
