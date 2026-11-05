@@ -455,7 +455,21 @@
             const ice = runs.length
                 ? runs.map(r => `<div class="flex justify-between text-sm py-1"><span class="text-slate-300">製冰 ${r.start}–${r.end.slice(6)}</span><span class="font-mono text-white">${fmt(r.hours, 2)} h・${fmt(r.kwh, 0)} kWh</span></div>`).join('')
                 : '<div class="flex justify-between text-sm py-1"><span class="text-slate-300">製冰（BCU-1）</span><span class="text-slate-400">昨晚到現在沒有製冰</span></div>';
-            return `<div class="mt-4 pt-3 border-t border-slate-600">${mag}${ice}<p class="text-xs text-slate-500 mt-2">由主機迴路電表自動判斷：BCU-1 超過 30 kW 算製冰中。</p></div>`;
+            return `<div class="mt-4 pt-3 border-t border-slate-600">${acLive(d.ac)}${mag}${ice}<p class="text-xs text-slate-500 mt-2">由主機迴路電表自動判斷：BCU-1 超過 30 kW 算製冰中。</p></div>`;
+        }
+
+        // 空調中央監控（空調監控主機每分鐘唯讀記錄）：冰桶液位、磁浮負載 %
+        function acLive(ac) {
+            if (!ac) return '';
+            const L = ac.latest || {};
+            const row = (k, v) => `<div class="flex justify-between text-sm py-1"><span class="text-slate-300">${k}</span><span class="font-mono text-white">${v}</span></div>`;
+            const stale = ac.age_min != null && ac.age_min > 30;
+            return `<div class="mb-2 pb-2 border-b border-slate-700">
+                <p class="text-xs text-slate-400 mb-1">空調中央監控 ${ac.time}${stale ? '<span class="text-amber-300">（超過 30 分鐘沒有新資料，請確認空調監控主機的 WindowViewer 有開著）</span>' : ''}</p>
+                ${row('冰桶液位 01／02', `${fmt(L.ice01_pct, 1)}%／${fmt(L.ice02_pct, 1)}%`)}
+                ${row('磁浮 CHU-2 負載', `${fmt(ac.mag_pct, 0)}%（限制 ${fmt(L.mag_limit_pct, 0)}%）・${fmt(ac.mag_kw, 0)} kW`)}
+                ${row('冰水出／回水', `${fmt(L.mag_chws_c, 1)}／${fmt(L.mag_chwr_c, 1)} °C・流量 ${fmt(L.flow_m3h, 0)} m³/h`)}
+            </div>`;
         }
 
         function pvSection(d) {

@@ -7,7 +7,9 @@
 
 輸出：<BMS自動匯出>\\Circuit_YYYY-MM-DD.csv，每天一個檔，每次執行附加一列：
 DateTime, <tag1>, <tag2>, ...（讀不到的留空）。
-寫完後若同資料夾有 github_token.txt（只開 Smart-Energy-Dashboard 的 Actions 寫入權限的 fine-grained token），
+寫完後把空調監控主機共用資料夾 \\\\10.10.2.4\\AC_Export 的 AC_*.csv（今天、昨天）與 ac_latest.json
+複製到同一個 BMS自動匯出 資料夾（需先用 cmdkey 存好 ctic_reader 認證；讀不到只記 log）。
+若同資料夾有 github_token.txt（只開 Smart-Energy-Dashboard 的 Actions 寫入權限的 fine-grained token），
 會等 3 分鐘讓 Google 雲端同步，再觸發 ems_live 工作流程更新網站；GitHub 自己的排程常延誤數小時。
 用法：
     python circuit_export.py          # 正式執行一次
@@ -111,6 +113,32 @@ def trigger_site_update(wait=180):
         log(f"site update trigger failed: python {err}; powershell {e2}")
 
 
+AC_SHARE = r"\\10.10.2.4\AC_Export"
+
+
+def copy_ac_files(out_dir):
+    """把空調監控主機的每分鐘記錄複製到雲端資料夾；讀不到就記一筆，不影響迴路匯出。"""
+    import shutil
+    today = dt.date.today()
+    names = [f"AC_{d:%Y-%m-%d}.csv" for d in (today - dt.timedelta(days=1), today)]
+    names.append("ac_latest.json")
+    copied = 0
+    try:
+        for n in names:
+            src = os.path.join(AC_SHARE, n)
+            if not os.path.exists(src):
+                continue
+            dst = os.path.join(out_dir, n)
+            st = os.stat(src)
+            if os.path.exists(dst) and os.path.getsize(dst) == st.st_size and os.path.getmtime(dst) >= st.st_mtime:
+                continue
+            shutil.copy2(src, dst)
+            copied += 1
+        log(f"AC files copied: {copied}")
+    except OSError as e:
+        log(f"AC copy failed: {e}")
+
+
 def main():
     test = "--test" in sys.argv
     with open(os.path.join(HERE, "circuit_tags.txt"), encoding="utf-8") as f:
@@ -141,6 +169,7 @@ def main():
             w.writerow(["DateTime"] + tags)
         w.writerow([f"{now:%Y/%m/%d %H:%M:%S}"] + values)
     log(f"OK {ok}/{len(tags)} tags in {secs:.0f}s -> {out}")
+    copy_ac_files(os.path.dirname(out))
     trigger_site_update()
 
 
