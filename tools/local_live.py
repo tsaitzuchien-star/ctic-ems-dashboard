@@ -34,13 +34,14 @@ MAIN_TAG = "F0_B2P2_MCB_KW_PV"
 TAIPOWER_OFFSET = 10.0          # 台電電表比 BMS 高約 10 kW（2026-11 對帳確認）
 AC_SHARE = r"\\10.10.2.4\AC_Export"
 AC_JSON = os.path.join(AC_SHARE, "ac_latest.json")
+MAG_JSON = os.path.join(AC_SHARE, "mag_auto_status.json")   # 磁浮自動控制 mag_auto.ps1 的狀態
 SAMPLE_S = 5
 HISTORY = 2 * 3600 // SAMPLE_S  # 網頁趨勢圖保留 2 小時
 SITE_DIR = os.path.join(HERE, "site")
 CIRCUIT_S = 60                  # 全迴路讀取間隔
 ALLOW_IPS = {"127.0.0.1", "::1", "10.10.2.20", "10.10.2.4"}   # 監控電腦本機、空調監控主機
 AC_TREND_KEYS = ["mag_c1_pct", "mag_c2_pct", "mag_c1_kw", "mag_c2_kw", "ice01_pct", "ice02_pct",
-                 "mag_chws_c", "mag_chwr_c", "flow_m3h"]
+                 "mag_chws_c", "mag_chwr_c", "flow_m3h", "mag_limit_pct", "chws_target"]
 
 
 def log(msg):
@@ -190,6 +191,14 @@ class Reader:
 def read_ac():
     try:
         with open(AC_JSON, encoding="utf-8-sig") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def read_mag():
+    try:
+        with open(MAG_JSON, encoding="utf-8-sig") as f:
             return json.load(f)
     except (OSError, ValueError):
         return None
@@ -494,9 +503,9 @@ def main():
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     log(f"本機即時網站啟動：http://localhost:{PORT}/")
-    ac, ac_at = None, 0.0
+    ac, ac_at, mag = None, 0.0, None
     circ, circ_at = Circuits(), 0.0
-    ac_trend = deque(maxlen=240)          # 每分鐘一點，保留 4 小時
+    ac_trend = deque(maxlen=720)          # 每分鐘一點，保留 12 小時
     while True:
         t0 = time.time()
         now = dt.datetime.now()
@@ -504,9 +513,10 @@ def main():
             kw = reader.main_kw() + TAIPOWER_OFFSET
             dem.add(now, kw)
             if t0 - ac_at > 30:
-                ac, ac_at = read_ac(), t0
+                ac, ac_at, mag = read_ac(), t0, read_mag()
                 if ac and ac.get("viewer_ok") and (not ac_trend or ac_trend[-1][0] != ac.get("time", "")[11:16]):
-                    ac_trend.append([ac.get("time", "")[11:16]] + [ac.get(k) for k in AC_TREND_KEYS])
+                    src = dict(ac, chws_target=(mag or {}).get("chws_target"))
+                    ac_trend.append([ac.get("time", "")[11:16]] + [src.get(k) for k in AC_TREND_KEYS])
             if t0 - circ_at >= CIRCUIT_S:
                 circ_at = t0
                 try:
@@ -526,7 +536,7 @@ def main():
             with STATE_LOCK:
                 LIVE.clear()
                 LIVE.update({"ok": True, "time": now.strftime("%H:%M:%S"), "offset": TAIPOWER_OFFSET,
-                             "demand": snap, "trend": list(dem.trend), "ac": ac,
+                             "demand": snap, "trend": list(dem.trend), "ac": ac, "mag": mag,
                              "ac_trend_keys": AC_TREND_KEYS, "ac_trend": list(ac_trend)})
         except Exception as e:
             with STATE_LOCK:

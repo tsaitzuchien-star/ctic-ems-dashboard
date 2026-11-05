@@ -444,6 +444,14 @@
             </div>
             <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-wave-square mr-2 text-blue-400"></i>最近 2 小時瞬時負載</h3>
                 <p class="text-xs text-slate-400 mb-3">紅色虛線：目前時段契約上限；橘色虛線：90%</p><div class="h-64"><canvas id="rtTrend"></canvas></div></div>
+            <div id="rt-magctl" class="col-span-full glass-card p-5 border-l-4 border-l-sky-400"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-sliders mr-2 text-sky-400"></i>磁浮自動控制（出水溫度與負載上限）</h3>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div><p class="text-slate-400 text-sm">冰水出水溫度</p><p class="text-4xl font-bold text-white font-mono"><span id="rt-chws">—</span><span class="text-sm font-normal text-slate-400 ml-1">°C</span></p>
+                        <p class="text-xs text-slate-400 mt-1" id="rt-chws-sub"></p>
+                        <div class="mt-3">${rtRow('負載上限', 'rt-mlimit', '%')}${rtRow('控制模式', 'rt-mmode')}${rtRow('熱房間比例（運轉中送風機）', 'rt-mhot')}</div>
+                        <p class="text-xs mt-2 text-slate-300" id="rt-mlast"></p></div>
+                    <div class="lg:col-span-2"><p class="text-xs text-slate-400 mb-1">今天：冰水出水溫度、目標值（°C，左軸）與負載上限、壓縮機平均負載（%，右軸）</p><div class="h-56"><canvas id="rtMag"></canvas></div></div>
+                </div></div>
             <div class="col-span-full grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-fan mr-2 text-sky-400"></i>磁浮冰水主機 CHU-2</h3>
                     ${rtBar('壓縮機 1 負載', 'rt-c1pct')}${rtBar('壓縮機 2 負載', 'rt-c2pct')}
@@ -482,6 +490,13 @@
                 { label: '磁浮負載 %', data: [], borderColor: '#a78bfa', borderWidth: 2, pointRadius: 0, borderDash: [4, 3], yAxisID: 'y1' }] },
                 options: { ...opt, plugins: { legend: { display: true, labels: { boxWidth: 10 } } },
                     scales: { ...opt.scales, y: { position: 'left', title: { display: true, text: '°C' } }, y1: { position: 'right', min: 0, grid: { drawOnChartArea: false }, title: { display: true, text: '台／%' } } } } }));
+            rtCharts.push(new Chart(document.getElementById('rtMag'), { type: 'line', data: { labels: [], datasets: [
+                { label: '出水溫度', data: [], borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
+                { label: '目標', data: [], borderColor: '#34d399', borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, yAxisID: 'y' },
+                { label: '負載上限 %', data: [], borderColor: '#fbbf24', borderWidth: 2, pointRadius: 0, stepped: true, yAxisID: 'y1' },
+                { label: '壓縮機平均負載 %', data: [], borderColor: '#a78bfa', borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0, yAxisID: 'y1' }] },
+                options: { ...opt, plugins: { legend: { display: true, labels: { boxWidth: 10 } } },
+                    scales: { ...opt.scales, y: { position: 'left', title: { display: true, text: '°C' } }, y1: { position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false }, title: { display: true, text: '%' } } } } }));
             updateRT();
         }
         function rtSet(id, v) { const el = document.getElementById(id); if (el) el.innerHTML = v; }
@@ -499,7 +514,7 @@
             rtSet('rt-margin-sub', r >= 1 ? '<span class="text-red-400">推估會超約，請立即降載磁浮</span>' : r >= 0.9 ? '<span class="text-amber-300">接近契約容量（≥90%），準備降載</span>' : '<span class="text-emerald-400">安全</span>');
             rtColor(document.getElementById('rt-c2'), r); rtColor(document.getElementById('rt-c3'), r);
             rtSet('rt-peak', fmt(s.today_peak, 1)); rtSet('rt-peak-sub', s.today_peak_at ? `${s.today_peak_at} 起的 15 分鐘` : '今天還沒有完整時段');
-            const [trend, bars, acc, fcuc] = rtCharts;
+            const [trend, bars, acc, fcuc, magc] = rtCharts;
             trend.data.labels = rt.trend.map(p => p[0].slice(0, 5));
             trend.data.datasets[0].data = rt.trend.map(p => p[1]);
             trend.data.datasets[1].data = rt.trend.map(() => s.limit);
@@ -526,6 +541,7 @@
                 acc.data.datasets[0].data = (rt.ac_trend || []).map(p => avg([p[idx('mag_c1_pct')], p[idx('mag_c2_pct')]]));
                 acc.data.datasets[1].data = (rt.ac_trend || []).map(p => avg([p[idx('ice01_pct')], p[idx('ice02_pct')]]));
                 acc.update('none');
+                updateMagCtl(a, rt.mag, keys, idx, avg, magc);
             } else rtSet('rt-acnote', '<span class="text-amber-300">讀不到空調監控主機（\\\\10.10.2.4\\AC_Export）</span>');
             const d = liveData;
             if (d) {
@@ -536,6 +552,36 @@
                 updateFcu(d, fcuc);
                 rtSet('rt-iceruns', runs.length ? runs.map(x => `<div class="flex justify-between py-1"><span class="text-slate-300">製冰 ${x.start}–${x.end.slice(6)}</span><span class="font-mono text-white">${fmt(x.hours, 2)} h・${fmt(x.kwh, 0)} kWh</span></div>`).join('') : '<span class="text-slate-400">昨晚到現在沒有製冰</span>');
             }
+        }
+
+        function updateMagCtl(a, m, keys, idx, avg, chart) {
+            const tgt = m && m.chws_target != null ? m.chws_target : null, chws = a.mag_chws_c;
+            const running = (a.mag_c1_pct || 0) + (a.mag_c2_pct || 0) > 0;
+            rtSet('rt-chws', fmt(chws, 1));
+            const dev = tgt != null && chws != null ? chws - tgt : null;
+            rtSet('rt-chws-sub', !running ? '冰機未運轉（水溫僅供參考）' : tgt == null ? '回水 ' + fmt(a.mag_chwr_c, 1) + ' °C' :
+                `目標 ${fmt(tgt, 1)} °C・回水 ${fmt(a.mag_chwr_c, 1)} °C・` + (dev > 1 ? '<span class="text-red-400">偏高 ' + fmt(dev, 1) + '°C</span>' : dev < -0.5 ? '<span class="text-sky-300">低於目標</span>' : '<span class="text-emerald-400">正常</span>'));
+            const card = document.getElementById('rt-magctl');
+            if (card) { card.classList.remove('border-l-sky-400', 'border-l-amber-400', 'border-l-red-500'); card.classList.add(running && dev > 1.5 ? 'border-l-red-500' : running && dev > 1 ? 'border-l-amber-400' : 'border-l-sky-400'); }
+            rtSet('rt-mlimit', fmt(a.mag_limit_pct, 0));
+            if (!m) { rtSet('rt-mmode', '<span class="text-slate-400">未啟用自動控制</span>'); rtSet('rt-mhot', '—'); rtSet('rt-mlast', ''); }
+            else {
+                const age = m.time ? (Date.now() - new Date(m.time.replace(' ', 'T') + '+08:00')) / 60000 : null;
+                const mode = age != null && age > 3 ? '<span class="text-amber-300">控制程式沒有回應（' + Math.round(age) + ' 分）</span>'
+                    : m.off ? '<span class="text-slate-300">已停用（mag_auto_off.txt）</span>' : m.enabled === false ? '<span class="text-amber-300">中控「是否啟用」未打勾</span>'
+                    : m.manual_hold ? '<span class="text-amber-300">人員接手中（暫停 60 分）</span>'
+                    : m.mode === 'LIVE' ? '<span class="text-emerald-400">自動控制中</span>' : '<span class="text-sky-300">試跑（只記錄，不寫入）</span>';
+                rtSet('rt-mmode', mode + (m.cap != null ? '・<span class="text-red-400">需量限制 ' + fmt(m.cap, 0) + '%</span>' : ''));
+                rtSet('rt-mhot', m.hot_share == null ? '—' : fmt(m.hot_share * 100, 0) + '%（' + (m.fcu_on ?? '—') + ' 台運轉）');
+                rtSet('rt-mlast', m.last_action ? `最近調整：${m.last_action_at.slice(11, 16)} ${m.mode === 'LIVE' ? '' : '（試跑）'}${m.last_action}` : '今天還沒有調整');
+            }
+            const tr = rt.ac_trend || [], col = k => keys.includes(k) ? idx(k) : -1;
+            chart.data.labels = tr.map(p => p[0]);
+            chart.data.datasets[0].data = tr.map(p => p[col('mag_chws_c')]);
+            chart.data.datasets[1].data = tr.map(p => p[col('chws_target')] ?? null);
+            chart.data.datasets[2].data = tr.map(p => p[col('mag_limit_pct')]);
+            chart.data.datasets[3].data = tr.map(p => avg([p[idx('mag_c1_pct')], p[idx('mag_c2_pct')]]));
+            chart.update('none');
         }
 
         function updateFcu(d, chart) {
