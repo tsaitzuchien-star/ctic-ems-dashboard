@@ -420,10 +420,11 @@
                 <div class="flex justify-between text-sm mb-2"><span class="text-slate-300">契約容量使用率（${d.period}）</span><span class="font-mono text-white">${pct.toFixed(0)}%</span></div>
                 <div class="w-full h-3 bg-slate-700 rounded-full overflow-hidden"><div class="${barColor} h-3 rounded-full" style="width:${pct}%"></div></div>
             </div>
+            ${pvSection(d)}
             ${usageSection(d)}
             <div class="col-span-full glass-card p-5">
                 <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-chart-line mr-2 text-blue-400"></i>今日 15 分鐘需量</h3>
-                <p class="text-xs text-slate-400 mb-3">實線：總表實測；虛線：預測系統的逐時預測；紅線：當時段契約上限</p>
+                <p class="text-xs text-slate-400 mb-3">藍線：總表實測（向台電購電）；黃色虛線：預測系統的逐時預測；綠色：太陽能發電；紅線：當時段契約上限</p>
                 <div class="h-72"><canvas id="liveTotal"></canvas></div>
             </div>
             <div class="col-span-full grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -443,6 +444,21 @@
             </div>
             </div>`;
             drawLiveCharts(d);
+        }
+
+        // 太陽能：T-REC 機器人寫入的試算表，4 支電表的累計度數差（太陽能全部在總表後面自用）
+        function pvSection(d) {
+            const pv = d.pv;
+            if (!pv) return '';
+            const grid = d.last15_kw, solar = pv.now_kw;
+            const share = (grid != null && solar != null && grid + solar > 0) ? solar / (grid + solar) * 100 : null;
+            const stale = pv.updated && (new Date(d.updated.replace(' ', 'T') + ':00+08:00') - new Date(pv.updated.replace(' ', 'T') + ':00+08:00')) / 60000 > 60;
+            return `<div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                ${tile('太陽能發電', fmt(solar, 1), 'kW', `資料時間 ${pv.updated ? pv.updated.slice(11) : '—'}${stale ? '（超過 1 小時未更新）' : ''}`, 'border-l-yellow-300')}
+                ${tile('園區實際用電', grid != null && solar != null ? fmt(grid + solar, 1) : '—', 'kW', '向台電購電＋太陽能自用', 'border-l-sky-300')}
+                ${tile('太陽能占比', share != null ? fmt(share, 1) : '—', '%', '最近 15 分鐘', 'border-l-emerald-300')}
+                ${tile('今日太陽能發電', fmt(pv.today_kwh, 0), 'kWh', `本月 ${fmt(pv.month_kwh)} kWh`, 'border-l-lime-300')}
+            </div>`;
         }
 
         // 四大用途：依房間迴路表（roomData）把各迴路歸到 空調／動力／照明／插座，同一迴路只算一次
@@ -796,6 +812,7 @@
                 data: { labels, datasets: [
                     { label: '實測', data: actual, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: true, pointRadius: d.times.length < 8 ? 3 : 0, tension: 0.2 },
                     { label: '預測', data: fc, borderColor: '#fbbf24', borderDash: [6, 4], pointRadius: 2, spanGaps: true },
+                    ...(d.pv && d.pv.series ? [{ label: '太陽能', data: labels.map(t => d.pv.series[t] ?? null), borderColor: '#a3e635', backgroundColor: 'rgba(163,230,53,0.15)', fill: true, pointRadius: 0, tension: 0.2 }] : []),
                     { label: '契約上限', data: labels.map(limitAt), borderColor: '#f87171', pointRadius: 0, borderWidth: 1.5, stepped: true }
                 ] },
                 options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
