@@ -530,7 +530,9 @@
                 rtPct('rt-c1pct', a.mag_c1_pct); rtPct('rt-c2pct', a.mag_c2_pct);
                 rtSet('rt-ckw', `${fmt(a.mag_c1_kw, 1)}／${fmt(a.mag_c2_kw, 1)}`); rtSet('rt-magkw', fmt((a.mag_c1_kw || 0) + (a.mag_c2_kw || 0), 1));
                 rtSet('rt-limit', fmt(a.mag_limit_pct, 0)); rtSet('rt-chw', `${fmt(a.mag_chws_c, 1)}／${fmt(a.mag_chwr_c, 1)}`); rtSet('rt-cw', `${fmt(a.mag_cws_c, 1)}／${fmt(a.mag_cwr_c, 1)}`);
-                rtSet('rt-cop', `${fmt(a.cop, 2)}／${fmt(a.kw_per_rt, 2)}`);
+                // 正確算法：Q(kW)=流量 m³/h×1.163×(回水−出水)；RT=Q/3.517；COP=Q/冰機 kW；kW/RT=冰機 kW/RT（中控畫面的公式少除 3.517、溫差為固定值）
+                { const kwe = (a.mag_c1_kw || 0) + (a.mag_c2_kw || 0), dT = (a.mag_chwr_c ?? 0) - (a.mag_chws_c ?? 0), q = (a.flow_m3h || 0) * 1.163 * dT, rtn = q / 3.517;
+                  rtSet('rt-cop', kwe > 5 && dT > 0.5 && q > 0 ? `${fmt(q / kwe, 2)}／${fmt(kwe / rtn, 2)} <span class="text-xs text-slate-400">（${fmt(rtn, 0)} RT・溫差 ${fmt(dT, 1)}°C）</span>` : '<span class="text-slate-400">冰機未運轉</span>'); }
                 rtPct('rt-ice1', a.ice01_pct); rtPct('rt-ice2', a.ice02_pct);
                 rtSet('rt-tank', `${fmt(a.tank_out_c, 1)}／${fmt(a.tank_in_c, 1)}`); rtSet('rt-icesp', fmt(a.ice_low_sp, 0)); rtSet('rt-bcut', `${fmt(a.bcu_chws_c, 1)}／${fmt(a.bcu_chwr_c, 1)}`);
                 rtSet('rt-flow', fmt(a.flow_m3h, 1)); rtSet('rt-flowtot', fmt(a.flow_tot_m3, 0));
