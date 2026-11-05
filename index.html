@@ -108,62 +108,66 @@
         // ==========================================
         // 核心邏輯：解析字串並計算用電 (全格式相容防呆版)
         // ==========================================
-        function calculateKwh(circuitString) {
-            if (!circuitString || circuitString === '-') return '-';
-            if (Object.keys(livePowerData).length === 0) return circuitString; 
+        // 房間卡片：各迴路 [最近15分kW, 今日kWh, 本月kWh]，來自 rooms.json
+        const ROOMS_URL = "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/rooms.json";
+        const PANEL_ALIAS = { 'EP3D_1': 'EP3D_1_B' };   // 網站盤名 → 監控標籤盤名
+        let roomsUpdated = null;
 
-            const circuits = circuitString.split(' / ');
-            let totalSum = 0;
-            let monthlySum = 0;
-            let hasData = false;
+        function circuitKey(part) {
+            const m = part.trim().match(/^(.+?)\s*\((\d+)迴?\)$/);
+            if (!m) return null;
+            let panel = m[1].trim().replace(/-/g, '_');
+            panel = PANEL_ALIAS[panel] || panel;
+            return `${panel}_${parseInt(m[2], 10)}`;
+        }
 
-            circuits.forEach(c => {
-                let rawString = c.trim();
-                
-                // 格式1: "R1B (20迴)"
-                let keyFormat1 = rawString; 
-                // 格式2: "R1B_20"
-                let keyFormat2 = rawString.replace(/\s*\(/, '_').replace(/迴\)/, ''); 
-                
-                let val = livePowerData[keyFormat1];
-                if (val === undefined) val = livePowerData[keyFormat2];
-
-                // 容錯機制：如果 GAS 還是舊版巢狀格式，自動解譯
-                if (val === undefined) {
-                    let parts = keyFormat2.split('_');
-                    if (parts.length >= 2) {
-                        let panel = parts[0];
-                        let circ = parts.slice(1).join('_');
-                        if (livePowerData[panel] && livePowerData[panel][circ] !== undefined) {
-                            val = livePowerData[panel][circ];
-                        }
-                    }
-                }
-
-                if (val !== undefined) {
-                    hasData = true;
-                    if (typeof val === 'object' && val !== null) {
-                        totalSum += (Number(val.total) || 0);
-                        // 💡 關鍵修正：讀取新版 GAS 回傳的 "usage" 欄位
-                        monthlySum += (Number(val.usage) || Number(val.monthly) || 0);
-                    } else {
-                        totalSum += (Number(val) || 0);
-                    }
-                }
+        // 一個用途（例如「插座」）的所有迴路加總；回傳 null 表示沒有任何迴路有資料
+        function sumCircuits(circuitString) {
+            if (!circuitString || circuitString === '-') return null;
+            let kw = 0, today = 0, month = 0, found = 0, total = 0;
+            circuitString.split(' / ').forEach(c => {
+                const key = circuitKey(c);
+                if (!key) return;
+                total++;
+                const v = livePowerData[key];
+                if (!v) return;
+                found++;
+                kw += v[0] || 0; today += v[1] || 0; month += v[2] || 0;
             });
+            return found ? { kw, today, month, found, total } : null;
+        }
 
-            if (!hasData) return circuitString;
+        function calculateKwh(circuitString) {
+            const s = sumCircuits(circuitString);
+            if (!s) return circuitString;
+            const partial = s.found < s.total ? `<span class="text-amber-400" title="部分迴路沒有監測資料">（${s.found}/${s.total} 迴）</span>` : '';
+            return `<div class="flex flex-col items-end leading-tight">
+                <span class="text-emerald-400 font-bold text-base" title="本月累計">${s.month.toFixed(1)} <span class="text-[10px] font-normal">kWh 本月</span></span>
+                <span class="text-slate-400 text-[10px]">今日 ${s.today.toFixed(1)} kWh · 目前 ${s.kw.toFixed(1)} kW ${partial}</span></div>`;
+        }
 
-            let resultHTML = `<div class="flex flex-col items-end leading-tight">`;
-            if (monthlySum > 0) {
-                resultHTML += `<span class="text-emerald-400 font-bold text-base drop-shadow-[0_0_8px_rgba(52,211,153,0.8)]" title="本月用電">${monthlySum.toFixed(1)} <span class="text-[10px] font-normal">kWh</span></span>`;
-                resultHTML += `<span class="text-slate-500 text-[10px]" title="歷史總累計">${totalSum.toFixed(1)} kWh (總計)</span>`;
-            } else {
-                resultHTML += `<span class="text-emerald-400 font-bold text-base drop-shadow-[0_0_8px_rgba(52,211,153,0.8)]" title="歷史總累計">${totalSum.toFixed(1)} <span class="text-[10px] font-normal">kWh</span></span>`;
+        function roomTotals(room) {
+            let kw = 0, today = 0, month = 0, any = false;
+            Object.values(room.circuits).forEach(cs => { const s = sumCircuits(cs); if (s) { any = true; kw += s.kw; today += s.today; month += s.month; } });
+            return any ? { kw, today, month } : null;
+        }
+
+        async function fetchRooms() {
+            try {
+                const res = await fetch(ROOMS_URL + "?t=" + Date.now(), { cache: "no-store" });
+                if (!res.ok) throw new Error(res.status);
+                const data = await res.json();
+                livePowerData = data.circuits;
+                roomsUpdated = data.updated;
+                if (currentTab !== 'Live') renderCards();
+            } catch (e) {
+                console.error('房間資料讀取失敗', e);
             }
-            resultHTML += `</div>`;
+        }
 
-            return resultHTML;
+        function lockBanner() {
+            if (!roomsUpdated) return `<div class="col-span-full text-xs text-slate-500 font-mono"><i class="fa-solid fa-spinner fa-spin mr-1"></i>各房間用電資料載入中...</div>`;
+            return `<div class="col-span-full text-xs text-slate-400 font-mono"><i class="fa-solid fa-cloud-arrow-down mr-1 text-emerald-400"></i>各房間用電資料時間 ${roomsUpdated}，本月＝本月 1 日（或開始記錄日）至今</div>`;
         }
 
         // 繪製圓餅圖
@@ -257,7 +261,9 @@
                 return;
             }
 
+            container.insertAdjacentHTML('beforeend', lockBanner());
             filtered.forEach(room => {
+                const tot = roomTotals(room);
                 let badgeColor = "bg-slate-500/30 text-slate-300";
                 if (room.type === '辦公室') badgeColor = "bg-emerald-500/30 text-emerald-300";
                 if (room.type === '實驗室') badgeColor = "bg-blue-500/30 text-blue-300";
@@ -266,7 +272,7 @@
                 const card = `
                 <div class="glass-card p-5 relative overflow-hidden group">
                     <div class="absolute top-0 right-0 ${badgeColor} px-3 py-1.5 rounded-bl-xl text-xs font-bold shadow-sm backdrop-blur-md border-b border-l border-white/10">${room.type}</div>
-                    <h2 class="text-2xl font-black mb-1 text-white group-hover:text-blue-400 transition drop-shadow-md">${room.room_id}</h2>
+                    <h2 class="text-2xl font-black mb-1 text-white group-hover:text-blue-400 transition drop-shadow-md">${room.room_id}${tot ? `<span class="text-sm font-mono font-normal text-emerald-300 ml-3" title="本房間本月合計">${tot.month.toFixed(0)} kWh</span>` : ''}</h2>
                     <p class="text-slate-400 text-sm mb-4 pb-3 border-b border-slate-700/60 truncate font-medium" title="${room.company}">${room.company || '<span class="italic text-slate-600">無進駐單位</span>'}</p>
                     
                     <div class="space-y-2 mt-4">
@@ -395,6 +401,8 @@
         
         // 設定每 5 分鐘背景自動抓取更新一次資料
         setInterval(fetchPowerData, 5 * 60 * 1000);
+        fetchRooms();
+        setInterval(fetchRooms, 5 * 60 * 1000);
 
     </script>
 </body>
