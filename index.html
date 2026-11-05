@@ -174,11 +174,15 @@
 
         // 歷史月用電：中創服務部「園區空間每月用電表」（2023/1 起），由 data/monthly.json 提供
         let monthly = null;
+        // 優先讀每天自動更新的 ems-monthly 分支；讀不到才用網站內附的備份
+        const MONTHLY_URLS = ["https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-monthly/monthly.json", "data/monthly.json"];
         async function fetchMonthly() {
-            try {
-                const res = await fetch('data/monthly.json', { cache: 'no-cache' });
-                if (res.ok) { monthly = await res.json(); renderCards(); }
-            } catch (e) { console.error('歷史月用電讀取失敗', e); }
+            for (const url of MONTHLY_URLS) {
+                try {
+                    const res = await fetch(url, { cache: 'no-cache' });
+                    if (res.ok) { monthly = await res.json(); renderCards(); return; }
+                } catch (e) { console.warn('歷史月用電讀取失敗', url, e); }
+            }
         }
         const sum = a => a.reduce((x, y) => x + (y || 0), 0);
         // 近 12 個月與前 12 個月
