@@ -62,7 +62,10 @@ public static class CticDdeW {
   }
   DdeFreeStringHandle(id,s);DdeFreeStringHandle(id,tp);DdeUninitialize(id); return ok;
  }
- public static string[] Read(string[] tags){
+ public static string[] Read(string[] tags){ return Read(tags,5000,0); }
+ // ms = 每點逾時；budget = 整批最多花幾毫秒（0 = 不限）；連續 5 點逾時就放棄，避免 WindowViewer 卡住時整個程式停住
+ public static string[] Read(string[] tags,uint ms,int budget){
+  var sw=System.Diagnostics.Stopwatch.StartNew(); int fails=0;
   uint id=0; if(DdeInitializeW(ref id,keep,0x10,0)!=0) return null;
   IntPtr s=DdeCreateStringHandleW(id,"VIEW",1200), tp=DdeCreateStringHandleW(id,"TAGNAME",1200);
   IntPtr c=DdeConnect(id,s,tp,IntPtr.Zero);
@@ -70,9 +73,12 @@ public static class CticDdeW {
   var o=new string[tags.Length];
   for(int i=0;i<tags.Length;i++){
    IntPtr it=DdeCreateStringHandleW(id,tags[i],1200); uint res;
-   IntPtr h=DdeClientTransaction(IntPtr.Zero,0,c,it,1,0x20B0,5000,out res);
-   if(h==IntPtr.Zero) o[i]="";
-   else{uint n=DdeGetData(h,null,0,0);var b=new byte[n];DdeGetData(h,b,n,0);DdeFreeDataHandle(h);o[i]=Encoding.Default.GetString(b).TrimEnd('\0','\r','\n',' ');}
+   long t0=sw.ElapsedMilliseconds;
+   IntPtr h=DdeClientTransaction(IntPtr.Zero,0,c,it,1,0x20B0,ms,out res);
+   bool timedOut=(sw.ElapsedMilliseconds-t0)>=(long)(ms*0.9);
+   if(h==IntPtr.Zero){ o[i]=""; if(timedOut) fails++; else fails=0; if(fails>=5 || (budget>0 && sw.ElapsedMilliseconds>budget)){ DdeFreeStringHandle(id,it); DdeDisconnect(c);DdeFreeStringHandle(id,s);DdeFreeStringHandle(id,tp);DdeUninitialize(id); return null; } }
+   else{fails=0; if(budget>0 && sw.ElapsedMilliseconds>budget){ DdeFreeDataHandle(h); DdeFreeStringHandle(id,it); DdeDisconnect(c);DdeFreeStringHandle(id,s);DdeFreeStringHandle(id,tp);DdeUninitialize(id); return null; }
+    uint n=DdeGetData(h,null,0,0);var b=new byte[n];DdeGetData(h,b,n,0);DdeFreeDataHandle(h);o[i]=Encoding.Default.GetString(b).TrimEnd('\0','\r','\n',' ');}
    DdeFreeStringHandle(id,it);
   }
   DdeDisconnect(c);DdeFreeStringHandle(id,s);DdeFreeStringHandle(id,tp);DdeUninitialize(id); return o;
@@ -97,7 +103,7 @@ function Read-Fcu {
     if (-not (Test-Path $FcuList)) { return $null }
     $script:fcuTags = [string[]]@(Get-Content $FcuList | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '_FCU\d+_(Run|T|setT)$' })
   }
-  $v = [CticDdeW]::Read($script:fcuTags)
+  $v = [CticDdeW]::Read($script:fcuTags, [uint32]1000, 60000)   # 最多 60 秒，讀不完這輪就跳過
   if ($null -eq $v) { return $null }
   $u = @{}
   for ($i = 0; $i -lt $fcuTags.Count; $i++) {
