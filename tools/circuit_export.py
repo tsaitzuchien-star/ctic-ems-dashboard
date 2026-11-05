@@ -7,6 +7,8 @@
 
 輸出：<BMS自動匯出>\\Circuit_YYYY-MM-DD.csv，每天一個檔，每次執行附加一列：
 DateTime, <tag1>, <tag2>, ...（讀不到的留空）。
+寫完後若同資料夾有 github_token.txt（只開 Smart-Energy-Dashboard 的 Actions 寫入權限的 fine-grained token），
+會等 3 分鐘讓 Google 雲端同步，再觸發 ems_live 工作流程更新網站；GitHub 自己的排程常延誤數小時。
 用法：
     python circuit_export.py          # 正式執行一次
     python circuit_export.py --test   # 只讀前 50 個標籤，印出結果與耗時，不寫檔
@@ -65,6 +67,29 @@ def read(conv, tag):
         return ""
 
 
+DISPATCH_URL = ("https://api.github.com/repos/tsaitzuchien-star/Smart-Energy-Dashboard"
+                "/actions/workflows/ems_live.yml/dispatches")
+
+
+def trigger_site_update(wait=180):
+    """有 github_token.txt 才觸發網站更新；失敗只記 log，不影響匯出。"""
+    path = os.path.join(HERE, "github_token.txt")
+    if not os.path.exists(path):
+        return
+    import json
+    import urllib.request
+    with open(path, encoding="utf-8") as f:
+        token = f.read().strip()
+    time.sleep(wait)
+    req = urllib.request.Request(DISPATCH_URL, data=json.dumps({"ref": "main"}).encode(), method="POST", headers={
+        "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "User-Agent": "ctic-circuit-export"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            log(f"site update triggered ({r.status})")
+    except Exception as e:
+        log(f"site update trigger failed: {e}")
+
+
 def main():
     test = "--test" in sys.argv
     with open(os.path.join(HERE, "circuit_tags.txt"), encoding="utf-8") as f:
@@ -95,6 +120,7 @@ def main():
             w.writerow(["DateTime"] + tags)
         w.writerow([f"{now:%Y/%m/%d %H:%M:%S}"] + values)
     log(f"OK {ok}/{len(tags)} tags in {secs:.0f}s -> {out}")
+    trigger_site_update()
 
 
 if __name__ == "__main__":
