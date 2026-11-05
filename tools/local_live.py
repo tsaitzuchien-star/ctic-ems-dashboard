@@ -237,6 +237,34 @@ def read_mag():
         return None
 
 
+# ---------------- 需量預測（只有這一項來自雲端：預測系統在 GitHub 上每天 17:47 計算） ----------------
+FORECAST_URL = "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/live.json"
+FORECAST = {"day": None, "data": None, "at": 0.0}
+
+
+def fetch_forecast():
+    """每 30 分鐘抓一次雲端 live.json 裡的 forecast（逐時預測 kW）。抓不到就沿用舊的，網站其他部分不受影響。"""
+    import subprocess
+    import urllib.request
+    while True:
+        d = None
+        try:
+            with urllib.request.urlopen(FORECAST_URL, timeout=20) as r:
+                d = json.load(r)
+        except Exception:
+            try:                                   # 公司網路攔 SSL：改用 PowerShell
+                ps = ("[Net.ServicePointManager]::SecurityProtocol='Tls12';"
+                      f"(Invoke-WebRequest -UseBasicParsing -Uri '{FORECAST_URL}').Content")
+                out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, timeout=60,
+                                     creationflags=0x08000000 if os.name == "nt" else 0)
+                d = json.loads(out.stdout.decode("utf-8", "replace"))
+            except Exception as e:
+                log(f"抓不到雲端預測：{type(e).__name__}: {e}")
+        if d and d.get("forecast"):
+            FORECAST.update(day=(d.get("updated") or "")[:10], data=d["forecast"], at=time.time())
+        time.sleep(1800)
+
+
 # ---------------- 全迴路（本機版總覽與房間資料） ----------------
 class Circuits:
     """15 分鐘整點讀值（G: 的 Circuit_*.csv＋本程式自己每 15 分鐘補的一列）＋最新一次讀值。"""
@@ -321,7 +349,8 @@ class Circuits:
 
     def build(self, now, ac_rows):
         rows = self.rows(now)
-        data = ems_calc.build(rows, None, now)
+        fc = FORECAST.get("data") if FORECAST.get("day") == now.date().isoformat() else None
+        data = ems_calc.build(rows, fc, now)
         data["source"] = "local"
         if self.live and ems_calc.MAIN_KW in self.live[1]:
             data["now_kw"] = round(self.live[1][ems_calc.MAIN_KW], 1)
@@ -535,6 +564,7 @@ def main():
 
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    threading.Thread(target=fetch_forecast, daemon=True).start()
     log(f"本機即時網站啟動：http://localhost:{PORT}/")
     ac, ac_at, mag = None, 0.0, None
     notifier, ems_data = line_push.Notifier(), None
