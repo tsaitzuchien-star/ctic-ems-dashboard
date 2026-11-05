@@ -51,6 +51,7 @@
 
     <div class="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-6 border-b border-slate-700 pb-4 sticky top-0 bg-[#0f172a]/90 backdrop-blur-md z-10 py-4 px-2 -mx-2 rounded-lg">
         <div class="flex flex-wrap gap-2 w-full xl:w-auto" id="tabsContainer">
+            <button onclick="switchTab('RT')" id="tab-RT" class="tab-btn hidden px-4 py-2 rounded-lg hover:bg-slate-800 text-rose-400 border border-transparent transition"><i class="fa-solid fa-bolt mr-2"></i>即時監控</button>
             <button onclick="switchTab('Live')" id="tab-Live" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-emerald-400 border border-transparent transition"><i class="fa-solid fa-gauge-high mr-2"></i>即時總覽</button>
             <button onclick="switchTab('A')" id="tab-A" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 border border-transparent transition"><i class="fa-solid fa-building mr-2"></i>A棟</button>
             <button onclick="switchTab('B')" id="tab-B" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 border border-transparent transition"><i class="fa-solid fa-building mr-2"></i>B棟</button>
@@ -72,7 +73,9 @@
         setInterval(() => document.getElementById('datetime').innerText = new Date().toLocaleString('zh-TW'), 1000);
 
         // 園區即時總覽：Smart-Energy-Dashboard 的 GitHub Actions 每 15 分鐘把監控電腦匯出的度數整理成 live.json
-        const LIVE_URL = "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/live.json";
+        // 在監控電腦本機（local_live.py）開啟時，全部資料直接由本機即時讀 InTouch，不連雲端
+        const EMS_LOCAL = !!window.EMS_LOCAL;
+        const LIVE_URL = EMS_LOCAL ? "/api/ems/live.json" : "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/live.json";
         let liveData = null;
         let liveCharts = [];
         // 🌟 你的 GAS Web App URL（舊版各迴路度數來源，尚未啟用）
@@ -110,7 +113,7 @@
         // 核心邏輯：解析字串並計算用電 (全格式相容防呆版)
         // ==========================================
         // 房間卡片：各迴路 [最近15分kW, 今日kWh, 本月kWh]，來自 rooms.json
-        const ROOMS_URL = "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/rooms.json";
+        const ROOMS_URL = EMS_LOCAL ? "/api/ems/rooms.json" : "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/rooms.json";
         const PANEL_ALIAS = { 'EP3D_1': 'EP3D_1_B' };   // 網站盤名 → 監控標籤盤名
         let roomsUpdated = null;
 
@@ -227,7 +230,7 @@
         // 歷史月用電：中創服務部「園區空間每月用電表」（2023/1 起），由 data/monthly.json 提供
         let monthly = null;
         // 優先讀每天自動更新的 ems-monthly 分支；讀不到才用網站內附的備份
-        const MONTHLY_URLS = ["https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-monthly/monthly.json", "data/monthly.json"];
+        const MONTHLY_URLS = EMS_LOCAL ? ["data/monthly.json"] : ["https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-monthly/monthly.json", "data/monthly.json"];
         async function fetchMonthly() {
             for (const url of MONTHLY_URLS) {
                 try {
@@ -238,7 +241,7 @@
         }
         // 台電帳單：南區服務組「南區用電資料.xlsx」中創部分，每天整理成 bill.json（含同仁填寫檢查）
         let bill = null;
-        const BILL_URLS = ["https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-monthly/bill.json", "data/bill.json"];
+        const BILL_URLS = EMS_LOCAL ? ["data/bill.json"] : ["https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-monthly/bill.json", "data/bill.json"];
         async function fetchBill() {
             for (const url of BILL_URLS) {
                 try {
@@ -346,6 +349,7 @@
             
             liveCharts.forEach(c => c.destroy());
             liveCharts = [];
+            if (currentTab === 'RT') { renderRT(container); return; }
             if (currentTab === 'Live') { renderLive(container); return; }
             if (currentTab === 'EM') { renderEM(container); return; }
 
@@ -397,6 +401,116 @@
                 <p class="text-slate-400 text-xs md:text-sm">${label}</p>
                 <p class="text-2xl md:text-3xl font-bold text-white font-mono">${value}<span class="text-sm font-normal text-slate-400 ml-1">${unit}</span></p>
                 <p class="text-xs text-slate-400 mt-1">${sub}</p></div>`;
+        }
+
+        // ==========================================
+        // 即時監控（只在監控電腦本機版）：每 5 秒讀 /api/live
+        // ==========================================
+        let rt = null, rtCharts = [];
+        async function fetchRT() {
+            try {
+                const res = await fetch('/api/live', { cache: 'no-store' });
+                rt = await res.json();
+            } catch (e) { rt = { ok: false, error: '連不到本機程式 local_live.py' }; }
+            if (currentTab === 'RT') updateRT();
+        }
+        function rtRow(label, id, unit = '') {
+            return `<div class="flex justify-between text-sm py-1 border-b border-slate-700/50"><span class="text-slate-300">${label}</span><span class="font-mono text-white"><span id="${id}">—</span>${unit ? ' ' + unit : ''}</span></div>`;
+        }
+        function rtBar(label, id) {
+            return `<div class="py-1"><div class="flex justify-between text-sm"><span class="text-slate-300">${label}</span><span class="font-mono text-white" id="${id}">—</span></div>
+                <div class="w-full h-2 bg-slate-700 rounded-full overflow-hidden mt-1"><div id="${id}-bar" class="h-2 bg-sky-400 rounded-full" style="width:0%"></div></div></div>`;
+        }
+        function renderRT(container) {
+            rtCharts.forEach(c => c.destroy()); rtCharts = [];
+            container.innerHTML = `
+            <div class="col-span-full flex flex-wrap justify-between items-center gap-2 text-sm"><span id="rt-status" class="font-mono text-slate-400">連線中…</span><span class="text-xs text-slate-500">數字為台電基準（BMS＋10 kW）・每 5 秒更新・資料直接讀監控電腦 InTouch 與空調監控主機</span></div>
+            <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                <div id="rt-c1" class="glass-card p-5 border-l-4 border-l-blue-400"><p class="text-slate-400 text-sm">總電表瞬時</p><p class="text-3xl font-bold text-white font-mono"><span id="rt-now">—</span><span class="text-sm font-normal text-slate-400 ml-1">kW</span></p><p class="text-xs text-slate-400 mt-1" id="rt-now-sub"></p></div>
+                <div id="rt-c2" class="glass-card p-5 border-l-4 border-l-emerald-400"><p class="text-slate-400 text-sm">本時段 15 分鐘需量推估</p><p class="text-3xl font-bold text-white font-mono"><span id="rt-proj">—</span><span class="text-sm font-normal text-slate-400 ml-1">kW</span></p><p class="text-xs text-slate-400 mt-1" id="rt-proj-sub"></p><div class="w-full h-2 bg-slate-700 rounded-full overflow-hidden mt-2"><div id="rt-proj-bar" class="h-2 rounded-full" style="width:0%"></div></div></div>
+                <div id="rt-c3" class="glass-card p-5 border-l-4 border-l-emerald-400"><p class="text-slate-400 text-sm">距契約容量</p><p class="text-3xl font-bold text-white font-mono"><span id="rt-margin">—</span><span class="text-sm font-normal text-slate-400 ml-1">kW</span></p><p class="text-xs mt-1" id="rt-margin-sub"></p></div>
+                <div class="glass-card p-5 border-l-4 border-l-amber-400"><p class="text-slate-400 text-sm">今日最高 15 分鐘需量</p><p class="text-3xl font-bold text-white font-mono"><span id="rt-peak">—</span><span class="text-sm font-normal text-slate-400 ml-1">kW</span></p><p class="text-xs text-slate-400 mt-1" id="rt-peak-sub"></p></div>
+            </div>
+            <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-wave-square mr-2 text-blue-400"></i>最近 2 小時瞬時負載</h3>
+                <p class="text-xs text-slate-400 mb-3">紅色虛線：目前時段契約上限；橘色虛線：90%</p><div class="h-64"><canvas id="rtTrend"></canvas></div></div>
+            <div class="col-span-full grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-fan mr-2 text-sky-400"></i>磁浮冰水主機 CHU-2</h3>
+                    ${rtBar('壓縮機 1 負載', 'rt-c1pct')}${rtBar('壓縮機 2 負載', 'rt-c2pct')}
+                    ${rtRow('壓縮機 1／2 功率', 'rt-ckw', 'kW')}${rtRow('合計功率', 'rt-magkw', 'kW')}${rtRow('負載限制', 'rt-limit', '%')}
+                    ${rtRow('冰水出水／回水', 'rt-chw', '°C')}${rtRow('冷卻水出水／回水', 'rt-cw', '°C')}${rtRow('COP／kW/RT', 'rt-cop')}${rtRow('今日運轉（迴路電表）', 'rt-magday')}</div>
+                <div class="glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-cubes-stacked mr-2 text-cyan-300"></i>儲冰系統 BCU-1／冰桶</h3>
+                    ${rtBar('冰桶 01 液位', 'rt-ice1')}${rtBar('冰桶 02 液位', 'rt-ice2')}
+                    ${rtRow('儲冰槽出水／入水', 'rt-tank', '°C')}${rtRow('冰桶低限自動啟動', 'rt-icesp', '%')}${rtRow('BCU-1 冰水出水／回水', 'rt-bcut', '°C')}${rtRow('BCU-1 功率（最近 15 分）', 'rt-bcukw', 'kW')}
+                    <div class="text-sm mt-2" id="rt-iceruns"></div></div>
+                <div class="glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-droplet mr-2 text-blue-300"></i>冰水系統</h3>
+                    ${rtRow('冰水流量', 'rt-flow', 'm³/h')}${rtRow('冰水累積流量', 'rt-flowtot', 'm³')}
+                    <p class="text-xs text-slate-400 mt-3 mb-1">磁浮平均負載（%）與冰桶平均液位（%），最近 4 小時</p><div class="h-40"><canvas id="rtAc"></canvas></div>
+                    <p class="text-xs mt-2" id="rt-acnote"></p></div>
+            </div>
+            <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-chart-column mr-2 text-amber-400"></i>今日各 15 分鐘需量</h3><div class="h-48"><canvas id="rtBars"></canvas></div></div>`;
+            const opt = { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { maxTicksLimit: 8 } } } };
+            rtCharts.push(new Chart(document.getElementById('rtTrend'), { type: 'line', data: { labels: [], datasets: [
+                { data: [], borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0, tension: 0.2 },
+                { data: [], borderColor: '#f87171', borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 },
+                { data: [], borderColor: '#fbbf24', borderDash: [3, 3], borderWidth: 1, pointRadius: 0 }] }, options: opt }));
+            rtCharts.push(new Chart(document.getElementById('rtBars'), { type: 'bar', data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] }, options: opt }));
+            rtCharts.push(new Chart(document.getElementById('rtAc'), { type: 'line', data: { labels: [], datasets: [
+                { label: '磁浮負載', data: [], borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0 },
+                { label: '冰桶液位', data: [], borderColor: '#67e8f9', borderWidth: 2, pointRadius: 0, borderDash: [4, 3] }] },
+                options: { ...opt, plugins: { legend: { display: true, labels: { boxWidth: 10 } } }, scales: { ...opt.scales, y: { min: 0, max: 100 } } } }));
+            updateRT();
+        }
+        function rtSet(id, v) { const el = document.getElementById(id); if (el) el.innerHTML = v; }
+        function rtPct(id, v) { rtSet(id, v == null ? '—' : fmt(v, 1) + '%'); const b = document.getElementById(id + '-bar'); if (b) b.style.width = Math.max(0, Math.min(100, v || 0)) + '%'; }
+        function rtColor(el, r) { if (!el) return; el.classList.remove('border-l-emerald-400', 'border-l-amber-400', 'border-l-red-500'); el.classList.add(r >= 1 ? 'border-l-red-500' : r >= 0.9 ? 'border-l-amber-400' : 'border-l-emerald-400'); }
+        function updateRT() {
+            if (!document.getElementById('rt-status') || !rt) return;
+            if (!rt.ok) { rtSet('rt-status', `<span class="text-red-400"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${rt.error || '讀不到資料'}</span>`); return; }
+            const s = rt.demand, r = s.projected / s.limit;
+            rtSet('rt-status', `<i class="fa-solid fa-circle text-emerald-400 mr-1 text-xs"></i>更新 ${rt.time}・${s.period}時段・契約 ${s.limit} kW`);
+            rtSet('rt-now', fmt(s.now_kw, 1)); rtSet('rt-now-sub', `BMS 讀值 ${fmt(s.now_kw - rt.offset, 1)} kW＋${rt.offset}`);
+            rtSet('rt-proj', fmt(s.projected, 1)); rtSet('rt-proj-sub', `${s.window}，已過 ${Math.floor(s.elapsed_s / 60)} 分，目前平均 ${fmt(s.window_avg, 1)}`);
+            const bar = document.getElementById('rt-proj-bar'); bar.style.width = Math.min(100, r * 100) + '%'; bar.className = 'h-2 rounded-full ' + (r >= 1 ? 'bg-red-500' : r >= 0.9 ? 'bg-amber-400' : 'bg-emerald-400');
+            rtSet('rt-margin', fmt(s.margin, 1));
+            rtSet('rt-margin-sub', r >= 1 ? '<span class="text-red-400">推估會超約，請立即降載磁浮</span>' : r >= 0.9 ? '<span class="text-amber-300">接近契約容量（≥90%），準備降載</span>' : '<span class="text-emerald-400">安全</span>');
+            rtColor(document.getElementById('rt-c2'), r); rtColor(document.getElementById('rt-c3'), r);
+            rtSet('rt-peak', fmt(s.today_peak, 1)); rtSet('rt-peak-sub', s.today_peak_at ? `${s.today_peak_at} 起的 15 分鐘` : '今天還沒有完整時段');
+            const [trend, bars, acc] = rtCharts;
+            trend.data.labels = rt.trend.map(p => p[0].slice(0, 5));
+            trend.data.datasets[0].data = rt.trend.map(p => p[1]);
+            trend.data.datasets[1].data = rt.trend.map(() => s.limit);
+            trend.data.datasets[2].data = rt.trend.map(() => s.limit * 0.9);
+            trend.update('none');
+            const ks = Object.keys(s.today || {}).sort();
+            bars.data.labels = ks; bars.data.datasets[0].data = ks.map(k => s.today[k]);
+            bars.data.datasets[0].backgroundColor = ks.map(k => s.today[k] >= s.limit ? '#f87171' : s.today[k] >= s.limit * 0.9 ? '#fbbf24' : '#38bdf8');
+            bars.update('none');
+            const a = rt.ac;
+            if (a) {
+                const avg = xs => { const v = xs.filter(x => x != null); return v.length ? v.reduce((p, q) => p + q, 0) / v.length : null; };
+                rtPct('rt-c1pct', a.mag_c1_pct); rtPct('rt-c2pct', a.mag_c2_pct);
+                rtSet('rt-ckw', `${fmt(a.mag_c1_kw, 1)}／${fmt(a.mag_c2_kw, 1)}`); rtSet('rt-magkw', fmt((a.mag_c1_kw || 0) + (a.mag_c2_kw || 0), 1));
+                rtSet('rt-limit', fmt(a.mag_limit_pct, 0)); rtSet('rt-chw', `${fmt(a.mag_chws_c, 1)}／${fmt(a.mag_chwr_c, 1)}`); rtSet('rt-cw', `${fmt(a.mag_cws_c, 1)}／${fmt(a.mag_cwr_c, 1)}`);
+                rtSet('rt-cop', `${fmt(a.cop, 2)}／${fmt(a.kw_per_rt, 2)}`);
+                rtPct('rt-ice1', a.ice01_pct); rtPct('rt-ice2', a.ice02_pct);
+                rtSet('rt-tank', `${fmt(a.tank_out_c, 1)}／${fmt(a.tank_in_c, 1)}`); rtSet('rt-icesp', fmt(a.ice_low_sp, 0)); rtSet('rt-bcut', `${fmt(a.bcu_chws_c, 1)}／${fmt(a.bcu_chwr_c, 1)}`);
+                rtSet('rt-flow', fmt(a.flow_m3h, 1)); rtSet('rt-flowtot', fmt(a.flow_tot_m3, 0));
+                const age = a.time ? (Date.now() - new Date(a.time.replace(' ', 'T') + '+08:00')) / 60000 : null;
+                rtSet('rt-acnote', !a.viewer_ok ? '<span class="text-amber-300">空調監控主機的 WindowViewer 沒開，讀不到最新值</span>' : age != null && age > 5 ? `<span class="text-amber-300">空調資料 ${Math.round(age)} 分鐘沒更新</span>` : `<span class="text-slate-500">空調資料時間 ${a.time.slice(11, 16)}</span>`);
+                const keys = rt.ac_trend_keys || [], idx = k => keys.indexOf(k) + 1;
+                acc.data.labels = (rt.ac_trend || []).map(p => p[0]);
+                acc.data.datasets[0].data = (rt.ac_trend || []).map(p => avg([p[idx('mag_c1_pct')], p[idx('mag_c2_pct')]]));
+                acc.data.datasets[1].data = (rt.ac_trend || []).map(p => avg([p[idx('ice01_pct')], p[idx('ice02_pct')]]));
+                acc.update('none');
+            } else rtSet('rt-acnote', '<span class="text-amber-300">讀不到空調監控主機（\\\\10.10.2.4\\AC_Export）</span>');
+            const d = liveData;
+            if (d) {
+                const bcu = (d.plant_now || {})['滷水主機 BCU-1（儲冰）'];
+                rtSet('rt-bcukw', fmt(bcu, 1));
+                const m = d.mag_today; rtSet('rt-magday', m ? `${fmt(m.run_hours, 1)} h・最高 ${fmt(m.max_kw, 0)} kW・${fmt(m.kwh, 0)} kWh` : '—');
+                const runs = d.ice_runs || [];
+                rtSet('rt-iceruns', runs.length ? runs.map(x => `<div class="flex justify-between py-1"><span class="text-slate-300">製冰 ${x.start}–${x.end.slice(6)}</span><span class="font-mono text-white">${fmt(x.hours, 2)} h・${fmt(x.kwh, 0)} kWh</span></div>`).join('') : '<span class="text-slate-400">昨晚到現在沒有製冰</span>');
+            }
         }
 
         function renderLive(container) {
@@ -867,17 +981,19 @@
             }));
         }
 
-        // 初始化：開啟即時總覽並立即觸發資料抓取
-        switchTab('Live');
+        // 初始化：本機版預設開「即時監控」，雲端版開「即時總覽」
+        if (EMS_LOCAL) document.getElementById('tab-RT').classList.remove('hidden');
+        switchTab(EMS_LOCAL ? 'RT' : 'Live');
         fetchPowerData();
-        
-        // 設定每 5 分鐘背景自動抓取更新一次資料
-        setInterval(fetchPowerData, 5 * 60 * 1000);
+
+        // 雲端版每 5 分鐘抓一次；本機版每分鐘（本機每分鐘重算）
+        setInterval(fetchPowerData, (EMS_LOCAL ? 1 : 5) * 60 * 1000);
         updateHeader();
         fetchMonthly();
         fetchBill();
         fetchRooms();
-        setInterval(fetchRooms, 5 * 60 * 1000);
+        setInterval(fetchRooms, (EMS_LOCAL ? 1 : 5) * 60 * 1000);
+        if (EMS_LOCAL) { fetchRT(); setInterval(fetchRT, 5000); }
 
     </script>
 </body>
