@@ -479,6 +479,11 @@ def main():
                 try:
                     circ.read(reader.conv, now)
                     data, rooms = circ.build(now, read_ac_rows(now))
+                    # 本程式啟動前的時段用全迴路總表度數補（總表 kWh 與台電同基準）
+                    if dem.day == now.date().isoformat():
+                        for hm, v in zip(data["times"], data["total"]):
+                            if v is not None:
+                                dem.today.setdefault(hm, v)
                     with STATE_LOCK:
                         EMS["live"] = json.dumps(data, ensure_ascii=False).encode("utf-8")
                         EMS["rooms"] = json.dumps(rooms, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
