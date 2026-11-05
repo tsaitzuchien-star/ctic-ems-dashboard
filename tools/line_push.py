@@ -8,7 +8,8 @@
 4. 每日摘要：08:00（昨天）、19:10（今天）。
 為了守住免費方案每月 200 則（則數 × 好友人數），每天最多推 MAX_PER_DAY 則（摘要不受限）。
 
-測試：python line_push.py --test   （送一則測試訊息）
+測試：python line_push.py --test   （先印出方案上限／本月已用／好友數，再送一則測試訊息）
+      python line_push.py --test --quota   （只看用量，不送）
 """
 import datetime as dt
 import json
@@ -239,5 +240,19 @@ if __name__ == "__main__":
         n = Notifier()
         if not n.enabled:
             raise SystemExit(f"找不到 {TOKEN_FILE}")
+        import subprocess
+        ps = ("[Net.ServicePointManager]::SecurityProtocol='Tls12';$h=@{Authorization='Bearer '+$env:LINE_TOKEN};"
+              "$q=Invoke-RestMethod -Uri 'https://api.line.me/v2/bot/message/quota' -Headers $h;"
+              "$c=Invoke-RestMethod -Uri 'https://api.line.me/v2/bot/message/quota/consumption' -Headers $h;"
+              "$f=Invoke-RestMethod -Uri 'https://api.line.me/v2/bot/insight/followers?date='+(Get-Date).AddDays(-1).ToString('yyyyMMdd') -Headers $h;"
+              "'方案上限 '+$q.value+' 則／月（'+$q.type+'），本月已用 '+$c.totalUsage+' 則，好友 '+$f.followers+' 人'")
+        try:
+            out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], env=dict(os.environ, LINE_TOKEN=n.token),
+                                 capture_output=True, text=True, timeout=60)
+            print(out.stdout.strip() or out.stderr.strip()[:300])
+        except Exception as e:
+            print(f"查不到用量：{e}")
+        if "--quota" in sys.argv:
+            raise SystemExit
         ok = send("【中創能管】測試訊息：LINE 推播設定成功 👍", n.token)
         print("送出成功" if ok else f"送出失敗，請看 {LOG}")
