@@ -236,6 +236,17 @@
                 } catch (e) { console.warn('歷史月用電讀取失敗', url, e); }
             }
         }
+        // 台電帳單：南區服務組「南區用電資料.xlsx」中創部分，每天整理成 bill.json（含同仁填寫檢查）
+        let bill = null;
+        const BILL_URLS = ["https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-monthly/bill.json", "data/bill.json"];
+        async function fetchBill() {
+            for (const url of BILL_URLS) {
+                try {
+                    const res = await fetch(url, { cache: 'no-cache' });
+                    if (res.ok) { bill = await res.json(); if (currentTab === 'EM') renderCards(); return; }
+                } catch (e) { console.warn('台電帳單讀取失敗', url, e); }
+            }
+        }
         const sum = a => a.reduce((x, y) => x + (y || 0), 0);
         // 近 12 個月與前 12 個月
         function last12(series) {
@@ -556,6 +567,39 @@
                 ['年度', '用電（度）', '電費（元）', '元/度', '空調分攤', '假日空調', '空壓機', '公共占比'], rows, '')}</div>`;
         }
 
+        function billSection() {
+            if (!bill) return '';
+            const m = bill.months, n = m.length, last = n - 1;
+            const D = bill.demand, C = bill.contract;
+            const pen12 = sum(bill.penalty.slice(-12)), penPrev = sum(bill.penalty.slice(-24, -12));
+            const yr = m[last].slice(0, 4);
+            const maxOf = p => Math.max(0, ...m.map((x, i) => x.startsWith(yr) ? (D[p][i] || 0) : 0));
+            const over = p => maxOf(p) > C[p];
+            const dTile = p => `<span class="${over(p) ? 'text-red-400' : 'text-emerald-300'}">${p} ${fmt(maxOf(p))}</span><span class="text-slate-500">/${fmt(C[p])}</span>`;
+            const issues = bill.issues.slice().reverse();
+            const pens = m.map((x, i) => [x, bill.penalty[i]]).filter(x => x[1] > 0).reverse()
+                .map(([x, p]) => { const i = m.indexOf(x); return [x, fmt(p), Object.keys(D).filter(k => D[k][i] > C[k]).map(k => `${k} ${fmt(D[k][i])}`).join('、') || '—']; });
+            return `
+            <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                ${tile(`台電帳單 ${m[last]}`, fmt(bill.kwh[last]), '度', `電費 ${fmt(bill.fee[last])} 元，${fmt(bill.fee[last] / bill.kwh[last], 2)} 元/度`, 'border-l-sky-400')}
+                ${tile('太陽能自用', fmt(bill.pv[last]), '度', `占總用電 ${fmt(bill.pv[last] / (bill.kwh[last] + bill.pv[last]) * 100, 1)}%`, 'border-l-yellow-300')}
+                ${tile('近 12 期超約罰款', fmt(pen12), '元', `前 12 期 ${fmt(penPrev)} 元`, pen12 > 0 ? 'border-l-red-400' : 'border-l-emerald-400')}
+                <div class="glass-card px-5 py-4 border-l-4 border-l-violet-400"><p class="text-slate-400 text-xs mb-1">${yr} 年各時段最高需量／契約（kW）</p>
+                    <p class="font-mono text-sm leading-6">${['尖峰', '半尖峰', '離峰'].map(dTile).join('<br>')}</p></div>
+            </div>
+            <div class="col-span-full glass-card p-5">
+                <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-file-invoice-dollar mr-2 text-violet-300"></i>台電帳單：各時段最高需量與契約容量</h3>
+                <p class="text-xs text-slate-400 mb-3">${bill.source}。虛線是現行契約（尖峰 ${C['尖峰']}、半尖峰 ${C['半尖峰']}、週六半尖峰與離峰 ${C['離峰']} kW）。台電電表比 BMS 畫面高約 10 kW。</p>
+                <div class="h-72"><canvas id="emBill"></canvas></div>
+            </div>
+            <div class="col-span-full grid grid-cols-1 xl:grid-cols-2 gap-6">
+                ${emTable('超約罰款紀錄', 'fa-solid fa-triangle-exclamation', 'text-red-400', '帳單上的超約附加費，以及當月超過契約的時段。',
+                    ['帳單月份', '罰款（元）', '超過現行契約的時段'], pens, '沒有罰款紀錄')}
+                ${emTable('帳單填寫檢查', 'fa-solid fa-list-check', 'text-amber-300', `自動檢查同仁填寫的數值（${bill.issues.length ? '紅色請修正，黃色請確認' : '目前沒有問題'}）：單價異常、太陽能和上月相同、超約卻沒填罰款、欄位空白或填 0。`,
+                    ['帳單月份', '檢查結果'], issues.map(x => [x.month, `<span class="${x.level === 'error' ? 'text-red-400' : 'text-amber-300'} whitespace-normal">${x.msg}</span>`]), '沒有發現問題')}
+            </div>`;
+        }
+
         function emRooms() {
             return roomData.filter(r => r.area > 0 && r.building !== 'Public')
                 .map(r => ({ room: r, t: roomTotals(r) }))
@@ -660,6 +704,7 @@
             ${occupancySection(occ)}
             ${auditSection()}
             ${historySection()}
+            ${billSection()}
             <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 ${tile('有迴路資料的進駐面積', fmt(areaAll), '坪', `${occ.length} 間有迴路資料；空置 ${fmt(sum(vacant, x => x.room.area))} 坪`, 'border-l-blue-400')}
                 ${tile('進駐空間即時用電', fmt(kwAll, 1), 'kW', `平均 ${fmt(wPerM2(kwAll, areaAll), 1)} W/m²；本月 ${fmt(kwhPerPing(monthAll, areaAll), 2)} kWh/坪`, 'border-l-emerald-400')}
@@ -697,6 +742,20 @@
                         scales: { x: { stacked: true, grid: { display: false }, ticks: { maxTicksLimit: 16 } },
                                   y: { stacked: true, title: { display: true, text: '度' }, grid: { color: 'rgba(148,163,184,0.15)' } },
                                   y2: { position: 'right', title: { display: true, text: '元/度' }, grid: { display: false }, min: 0 } } }
+                }));
+            }
+            if (bill && document.getElementById('emBill')) {
+                const k = Math.max(0, bill.months.length - 36), lab = bill.months.slice(k);
+                const col = { '尖峰': '#f87171', '半尖峰': '#fbbf24', '週六半尖峰': '#a78bfa', '離峰': '#38bdf8' };
+                const ds = Object.keys(col).flatMap(p => [
+                    { type: 'line', label: p, data: bill.demand[p].slice(k).map(v => v || null), borderColor: col[p], backgroundColor: col[p], pointRadius: 2, spanGaps: true },
+                    ...(p === '週六半尖峰' ? [] : [{ type: 'line', label: `${p}契約`, data: lab.map(() => bill.contract[p]), borderColor: col[p], borderDash: [6, 4], borderWidth: 1, pointRadius: 0 }])
+                ]);
+                liveCharts.push(new Chart(document.getElementById('emBill'), {
+                    data: { labels: lab, datasets: ds },
+                    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                        plugins: { legend: { labels: { filter: i => !i.text.endsWith('契約') } } },
+                        scales: { x: { grid: { display: false } }, y: { min: 100, title: { display: true, text: 'kW' }, grid: { color: 'rgba(148,163,184,0.15)' } } } }
                 }));
             }
             const colors = { '辦公室': '#34d399', '實驗室': '#38bdf8', '未進駐': '#94a3b8' };
@@ -770,6 +829,7 @@
         setInterval(fetchPowerData, 5 * 60 * 1000);
         updateHeader();
         fetchMonthly();
+        fetchBill();
         fetchRooms();
         setInterval(fetchRooms, 5 * 60 * 1000);
 
