@@ -8,7 +8,7 @@ r"""中創園區 本機即時能源網站（在監控電腦執行，只給監控
 用內建網頁伺服器在 http://<監控電腦>:8088/ 提供完整園區能源網站（與雲端版相同，另多一個
 「即時監控」分頁每 5 秒更新），精簡版即時頁在 /live。
 網站檔案（index.html、data\*.json）放在本程式旁的 site\ 資料夾。
-只放行 ALLOW_IPS 裡的電腦（本機與空調監控主機），其他電腦一律 403。
+只放行 ALLOW_IPS 裡的電腦（本機與空調監控主機）與 allow_ips.txt 列的 IP／網段（例如 Tailscale 手機），其他一律 403。
 
 需要：InTouch WindowViewer 開著、系統管理員權限（與 view.exe 同權限才能 DDE）、pywin32。
 用法：
@@ -41,6 +41,38 @@ HISTORY = 2 * 3600 // SAMPLE_S  # 網頁趨勢圖保留 2 小時
 SITE_DIR = os.path.join(HERE, "site")
 CIRCUIT_S = 60                  # 全迴路讀取間隔
 ALLOW_IPS = {"127.0.0.1", "::1", "10.10.2.20", "10.10.2.4"}   # 監控電腦本機、空調監控主機
+ALLOW_FILE = os.path.join(HERE, "allow_ips.txt")   # 另外允許的 IP 或網段（每行一個，例如 Tailscale 手機 100.101.102.103）
+
+
+def load_allow_nets():
+    import ipaddress
+    nets = []
+    try:
+        with open(ALLOW_FILE, encoding="utf-8-sig") as f:
+            for line in f:
+                t = line.split("#", 1)[0].strip()
+                if t:
+                    try:
+                        nets.append(ipaddress.ip_network(t, strict=False))
+                    except ValueError:
+                        pass
+    except OSError:
+        pass
+    return nets
+
+
+ALLOW_NETS = load_allow_nets()
+
+
+def allowed(ip):
+    if ip in ALLOW_IPS:
+        return True
+    import ipaddress
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(a in n for n in ALLOW_NETS)
 AC_TREND_KEYS = ["mag_c1_pct", "mag_c2_pct", "mag_c1_kw", "mag_c2_kw", "ice01_pct", "ice02_pct",
                  "mag_chws_c", "mag_chwr_c", "flow_m3h", "mag_limit_pct", "chws_target"]
 
@@ -370,7 +402,7 @@ class Handler(BaseHTTPRequestHandler):
         ip = self.client_address[0]
         if ip.startswith("::ffff:"):
             ip = ip[7:]
-        if ip not in ALLOW_IPS:
+        if not allowed(ip):
             self.send_error(403, "Only the monitoring PC and AC PC may view this site")
             return
         path = self.path.split("?", 1)[0]
