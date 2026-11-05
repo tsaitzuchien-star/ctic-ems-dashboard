@@ -574,7 +574,7 @@
                     : m.manual_hold ? '<span class="text-amber-300">人員接手中（暫停 60 分）</span>'
                     : m.mode === 'LIVE' ? '<span class="text-emerald-400">自動控制中</span>' : '<span class="text-sky-300">試跑（只記錄，不寫入）</span>';
                 rtSet('rt-mmode', mode + (m.cap != null ? '・<span class="text-red-400">需量限制 ' + fmt(m.cap, 0) + '%</span>' : ''));
-                rtSet('rt-mhot', m.hot_share == null ? '—' : fmt(m.hot_share * 100, 0) + '%（' + (m.fcu_on ?? '—') + ' 台運轉）');
+                rtSet('rt-mhot', (typeof m.hot_share === 'number' ? fmt(m.hot_share * 100, 0) + '%' : '—') + '（' + (typeof m.fcu_on === 'number' ? m.fcu_on : 0) + ' 台運轉）');
                 rtSet('rt-mlast', m.last_action ? `最近調整：${m.last_action_at.slice(11, 16)} ${m.mode === 'LIVE' ? '' : '（試跑）'}${m.last_action}` : '今天還沒有調整');
             }
             const tr = rt.ac_trend || [], col = k => keys.includes(k) ? idx(k) : -1;
