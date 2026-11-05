@@ -75,9 +75,9 @@ $inv = [Globalization.CultureInfo]::InvariantCulture
 function Num($s) { $d = 0.0; if ([double]::TryParse("$s", [Globalization.NumberStyles]::Float, $inv, [ref]$d)) { $d } else { $null } }
 
 function Read-Mag {
-  $v = [CticDdeW]::Read([string[]]@($Tag, 'SGB1DC51_CHU2_ST', 'SG_CHU2_Item30041', 'SG_CHU2_Item30043'))
+  $v = [CticDdeW]::Read([string[]]@($Tag, 'SGB1DC51_CHU2_ST', 'SG_CHU2_Item30041', 'SG_CHU2_Item30043', 'SG_CHU2_Item40035_SCH_ONOFF'))
   if ($null -eq $v) { return $null }
-  [pscustomobject]@{ limit = Num $v[0]; run = Num $v[1]; kw = ((Num $v[2]) + (Num $v[3])) }
+  [pscustomobject]@{ limit = Num $v[0]; run = Num $v[1]; kw = ((Num $v[2]) + (Num $v[3])); enabled = Num $v[4] }
 }
 function Read-Demand {
   try { $d = Invoke-RestMethod -Uri $Api -TimeoutSec 5 } catch { return $null }
@@ -133,6 +133,8 @@ function Step {
     $script:base = $null; $script:lastWrite = $null
     Log-Row $d $m $m.limit "manual-override($($m.limit))"; return
   }
+  # 中控畫面「是否啟用」沒打勾時，負載限制不會作用 → 不動作
+  if ($m.enabled -lt 0.5) { Log-Row $d $m $cur 'limit-not-enabled'; return }
   if (Test-Path $Off) { Log-Row $d $m $cur 'off-switch'; $script:base = $null; $script:sim = $null; return }
 
   if (-not $d -or $d.age -gt $STALE_S) {

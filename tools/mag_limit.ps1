@@ -59,8 +59,8 @@ public static class CticDdeW {
 "@
 if (-not ('CticDdeW' -as [type])) { Add-Type -TypeDefinition $src }
 
-$names = 'limit_pct','chu2_st','c1_pct','c2_pct','c1_kw','c2_kw','chws_c','chwr_c'
-$tags  = [string[]]@($Tag,'SGB1DC51_CHU2_ST','SG_CHU2_Item30049','SG_CHU2_Item30051','SG_CHU2_Item30041','SG_CHU2_Item30043','SG_CHU2_Item30001','SG_CHU2_Item30003')
+$names = 'enabled','limit_pct','chu2_st','c1_pct','c2_pct','c1_kw','c2_kw','chws_c','chwr_c'
+$tags  = [string[]]@('SG_CHU2_Item40035_SCH_ONOFF',$Tag,'SGB1DC51_CHU2_ST','SG_CHU2_Item30049','SG_CHU2_Item30051','SG_CHU2_Item30041','SG_CHU2_Item30043','SG_CHU2_Item30001','SG_CHU2_Item30003')
 function Snap {
   $v = [CticDdeW]::Read($tags)
   if ($null -eq $v) { throw 'DDE 連不上 InTouch（WindowViewer 有開嗎？）' }
