@@ -592,12 +592,13 @@
             const maxOf = p => Math.max(0, ...m.map((x, i) => x.startsWith(yr) ? (D[p][i] || 0) : 0));
             const over = p => maxOf(p) > C[p];
             const dTile = p => `<span class="${over(p) ? 'text-red-400' : 'text-emerald-300'}">${p} ${fmt(maxOf(p))}</span><span class="text-slate-500">/${fmt(C[p])}</span>`;
+            const fyLast = (bill.fy_months || []).includes(m[last]);
             const issues = bill.issues.slice().reverse();
             const pens = m.map((x, i) => [x, bill.penalty[i]]).filter(x => x[1] > 0).reverse()
                 .map(([x, p]) => { const i = m.indexOf(x); return [x, fmt(p), Object.keys(D).filter(k => D[k][i] > C[k]).map(k => `${k} ${fmt(D[k][i])}`).join('、') || '—']; });
             return `
             <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-                ${tile(`台電帳單 ${m[last]}`, fmt(bill.kwh[last]), '度', `電費 ${fmt(bill.fee[last])} 元，${fmt(bill.fee[last] / bill.kwh[last], 2)} 元/度`, 'border-l-sky-400')}
+                ${tile(`台電帳單 ${m[last]}`, fmt(bill.kwh[last]), '度', `電費 ${fmt(bill.fee[last])} 元，${fmt(bill.fee[last] / bill.kwh[last], 2)} 元/度${fyLast ? `，最高需量 ${fmt(bill.max_kw[last])} kW（能源統計表先填）` : ''}`, 'border-l-sky-400')}
                 ${tile('太陽能自用', fmt(bill.pv[last]), '度', `占總用電 ${fmt(bill.pv[last] / (bill.kwh[last] + bill.pv[last]) * 100, 1)}%`, 'border-l-yellow-300')}
                 ${tile('近 12 期超約罰款', fmt(pen12), '元', `前 12 期 ${fmt(penPrev)} 元`, pen12 > 0 ? 'border-l-red-400' : 'border-l-emerald-400')}
                 <div class="glass-card px-5 py-4 border-l-4 border-l-violet-400"><p class="text-slate-400 text-xs mb-1">${yr} 年各時段最高需量／契約（kW）</p>
@@ -611,7 +612,7 @@
             <div class="col-span-full grid grid-cols-1 xl:grid-cols-2 gap-6">
                 ${emTable('超約罰款紀錄', 'fa-solid fa-triangle-exclamation', 'text-red-400', '帳單上的超約附加費，以及當月超過契約的時段。',
                     ['帳單月份', '罰款（元）', '超過現行契約的時段'], pens, '沒有罰款紀錄')}
-                ${emTable('帳單填寫檢查', 'fa-solid fa-list-check', 'text-amber-300', `自動檢查同仁填寫的數值（${bill.issues.length ? '紅色請修正，黃色請確認' : '目前沒有問題'}）：單價異常、太陽能和上月相同、超約卻沒填罰款、欄位空白或填 0。`,
+                ${emTable('帳單填寫檢查', 'fa-solid fa-list-check', 'text-amber-300', `自動檢查同仁填寫的數值（${bill.issues.length ? '紅色請修正，黃色請確認' : '目前沒有問題'}）：單價異常、太陽能和上月相同、超約卻沒填罰款、欄位空白或填 0，並和「能源統計表」對帳。`,
                     ['帳單月份', '檢查結果'], issues.map(x => [x.month, `<span class="${x.level === 'error' ? 'text-red-400' : 'text-amber-300'} whitespace-normal">${x.msg}</span>`]), '沒有發現問題')}
             </div>`;
         }
@@ -767,6 +768,8 @@
                     { type: 'line', label: p, data: bill.demand[p].slice(k).map(v => v || null), borderColor: col[p], backgroundColor: col[p], pointRadius: 2, spanGaps: true },
                     ...(p === '週六半尖峰' ? [] : [{ type: 'line', label: `${p}契約`, data: lab.map(() => bill.contract[p]), borderColor: col[p], borderDash: [6, 4], borderWidth: 1, pointRadius: 0 }])
                 ]);
+                const fy = bill.fy_months || [];
+                if (fy.length) ds.push({ type: 'line', label: '最高需量（能源統計表，尚未分時段）', data: lab.map((x, i) => fy.includes(x) ? bill.max_kw[k + i] : null), borderColor: '#e2e8f0', backgroundColor: '#e2e8f0', pointRadius: 5, pointStyle: 'rectRot', showLine: false });
                 liveCharts.push(new Chart(document.getElementById('emBill'), {
                     data: { labels: lab, datasets: ds },
                     options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
