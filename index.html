@@ -172,6 +172,34 @@
         const OFF_HOURS = 510;   // 一個月約 730 小時，扣掉 22 個工作天 × 10 小時上班 ≈ 510 小時下班時間
         const median = a => { if (!a.length) return null; const b = [...a].sort((x, y) => x - y); const m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; };
 
+        // 歷史月用電：中創服務部「園區空間每月用電表」（2023/1 起），由 data/monthly.json 提供
+        let monthly = null;
+        async function fetchMonthly() {
+            try {
+                const res = await fetch('data/monthly.json', { cache: 'no-cache' });
+                if (res.ok) { monthly = await res.json(); renderCards(); }
+            } catch (e) { console.error('歷史月用電讀取失敗', e); }
+        }
+        const sum = a => a.reduce((x, y) => x + (y || 0), 0);
+        // 近 12 個月與前 12 個月
+        function last12(series) {
+            const n = series.length, cur = sum(series.slice(n - 12)), prev = n >= 24 ? sum(series.slice(n - 24, n - 12)) : null;
+            return { cur, prev, chg: prev ? (cur - prev) / prev * 100 : null };
+        }
+        function sparkline(vals, w = 120, h = 28) {
+            const max = Math.max(...vals, 1);
+            const pts = vals.map((v, i) => `${(i / (vals.length - 1) * w).toFixed(1)},${(h - 2 - v / max * (h - 4)).toFixed(1)}`).join(' ');
+            return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" class="inline-block align-middle"><polyline points="${pts}" fill="none" stroke="#38bdf8" stroke-width="1.5"/></svg>`;
+        }
+        function historyLine(room) {
+            const v = monthly && monthly.rooms[room.room_id];
+            if (!v || sum(v) <= 0) return '';
+            const l = last12(v), m = monthly.months;
+            const chg = l.chg === null ? '' : `<span class="${l.chg > 0 ? 'text-red-400' : 'text-emerald-400'}">${l.chg > 0 ? '▲' : '▼'}${fmt(Math.abs(l.chg))}%</span>`;
+            return `<div class="flex items-center justify-between gap-2 text-xs text-slate-400 mb-3 font-mono" title="${m[0]}–${m[m.length - 1]} 每月用電（含空調分攤）">
+                ${sparkline(v.slice(-24))}<span>近 12 月 ${fmt(l.cur)} 度 ${chg}${room.area ? `<br>${fmt(l.cur / room.area)} 度/坪·年` : ''}</span></div>`;
+        }
+
         async function fetchRooms() {
             try {
                 const res = await fetch(ROOMS_URL + "?t=" + Date.now(), { cache: "no-store" });
@@ -298,6 +326,7 @@
                     <p class="text-slate-400 text-sm ${room.area ? 'mb-1' : 'mb-4 pb-3 border-b border-slate-700/60'} truncate font-medium" title="${room.company}">${room.company || '<span class="italic text-slate-600">無進駐單位</span>'}</p>
                     ${room.area ? `<p class="text-xs text-slate-400 mb-4 pb-3 border-b border-slate-700/60 font-mono">${fmt(room.area, 1)} 坪${tot ? ` · <span class="text-sky-300" title="目前用電密度">${fmt(wPerM2(tot.kw, room.area), 1)} W/m²</span> · <span class="text-emerald-300" title="本月每坪用電">${fmt(kwhPerPing(tot.month, room.area), 1)} kWh/坪</span>` : ''}${tot && tot.night != null ? `<br><span class="text-violet-300" title="最近一晚 00:00–06:00 平均">夜間基載 ${fmt(tot.night, 2)} kW</span>${tot.work ? `（上班時段的 ${fmt(tot.night / tot.work * 100)}%）` : ''}` : ''}</p>` : ''}
                     
+                    ${historyLine(room)}
                     <div class="space-y-2 mt-4">
                         ${renderCircuitRow('fa-solid fa-snowflake', 'text-blue-400', '空調', room.circuits['空調'])}
                         ${renderCircuitRow('fa-solid fa-plug', 'text-amber-400', '插座', room.circuits['插座'])}
@@ -465,6 +494,31 @@
                 ['使用類別', '面積（坪）', '面積占比', '目前 kW', '用電占比', 'W/m²', '本月 kWh/坪'], rows, '')}</div>`;
         }
 
+        function historySection() {
+            if (!monthly) return '';
+            const P = monthly.park, m = monthly.months;
+            const k = last12(P.kwh), f = last12(P.fee);
+            const years = [...new Set(m.map(x => x.slice(0, 4)))];
+            const lastMonth = +m[m.length - 1].split('/')[1];
+            // 各年同期（1 月到最新月份）比較
+            const ytd = (key, y) => sum(m.map((x, i) => (x.startsWith(y + '/') && +x.split('/')[1] <= lastMonth) ? P[key][i] : 0));
+            const rows = years.map(y => [y, fmt(ytd('kwh', y)), fmt(ytd('fee', y)), fmt(ytd('fee', y) / ytd('kwh', y), 2), fmt(ytd('ac', y)), fmt(ytd('holiday_ac', y)), fmt(ytd('air', y)), `${fmt(ytd('public', y) / ytd('kwh', y) * 100)}%`]);
+            return `
+            <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                ${tile('近 12 個月用電', fmt(k.cur / 1000, 1), '千度', k.chg === null ? '' : `較前 12 個月 ${k.chg > 0 ? '+' : ''}${fmt(k.chg, 1)}%`, 'border-l-sky-400')}
+                ${tile('近 12 個月電費', fmt(f.cur / 1e4), '萬元', f.chg === null ? '' : `較前 12 個月 ${f.chg > 0 ? '+' : ''}${fmt(f.chg, 1)}%`, 'border-l-amber-400')}
+                ${tile('平均電價', fmt(f.cur / k.cur, 2), '元/度', `${m[m.length - 13]}–${m[m.length - 1]}`, 'border-l-red-400')}
+                ${tile('公共用電占比', fmt(sum(P.public.slice(-12)) / k.cur * 100), '%', '機房、公設、梯廳等，不含各空間空調分攤', 'border-l-slate-400')}
+            </div>
+            <div class="col-span-full glass-card p-5">
+                <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-chart-column mr-2 text-sky-400"></i>園區每月用電與電價</h3>
+                <p class="text-xs text-slate-400 mb-3">${monthly.source}；${m[0]}–${m[m.length - 1]}。長條：進駐與公共用電；線：平均每度電費。</p>
+                <div class="h-72"><canvas id="emMonthly"></canvas></div>
+            </div>
+            <div class="col-span-full">${emTable(`歷年同期比較（1–${lastMonth} 月）`, 'fa-solid fa-calendar', 'text-amber-400', '假日空調申請與空壓機逐年增加，是目前最值得管理的兩項。',
+                ['年度', '用電（度）', '電費（元）', '元/度', '空調分攤', '假日空調', '空壓機', '公共占比'], rows, '')}</div>`;
+        }
+
         function emRooms() {
             return roomData.filter(r => r.area > 0 && r.building !== 'Public')
                 .map(r => ({ room: r, t: roomTotals(r) }))
@@ -523,6 +577,7 @@
 
             container.innerHTML = `
             ${occupancySection(occ)}
+            ${historySection()}
             <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 ${tile('有迴路資料的進駐面積', fmt(areaAll), '坪', `${occ.length} 間有迴路資料；空置 ${fmt(sum(vacant, x => x.room.area))} 坪`, 'border-l-blue-400')}
                 ${tile('進駐空間即時用電', fmt(kwAll, 1), 'kW', `平均 ${fmt(wPerM2(kwAll, areaAll), 1)} W/m²；本月 ${fmt(kwhPerPing(monthAll, areaAll), 2)} kWh/坪`, 'border-l-emerald-400')}
@@ -548,6 +603,20 @@
             </div>
             ${vacantRows.length ? `<div class="col-span-full">${emTable('空置空間仍有用電', 'fa-solid fa-door-open', 'text-amber-400', '登記為空置但迴路仍有讀數，可能是設備未斷電或迴路對照需要更新。', ['空間', '狀態', '坪', '目前 kW', '今日 kWh'], vacantRows, '')}</div>` : ''}`;
 
+            if (monthly && document.getElementById('emMonthly')) {
+                const P = monthly.park;
+                liveCharts.push(new Chart(document.getElementById('emMonthly'), {
+                    data: { labels: monthly.months, datasets: [
+                        { type: 'bar', label: '進駐用電', data: P.tenant, backgroundColor: '#38bdf8', stack: 'k', yAxisID: 'y' },
+                        { type: 'bar', label: '公共用電', data: P.public, backgroundColor: '#64748b', stack: 'k', yAxisID: 'y' },
+                        { type: 'line', label: '元/度', data: P.fee.map((v, i) => P.kwh[i] ? +(v / P.kwh[i]).toFixed(2) : null), borderColor: '#fbbf24', pointRadius: 0, yAxisID: 'y2' }
+                    ] },
+                    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                        scales: { x: { stacked: true, grid: { display: false }, ticks: { maxTicksLimit: 16 } },
+                                  y: { stacked: true, title: { display: true, text: '度' }, grid: { color: 'rgba(148,163,184,0.15)' } },
+                                  y2: { position: 'right', title: { display: true, text: '元/度' }, grid: { display: false }, min: 0 } } }
+                }));
+            }
             const colors = { '辦公室': '#34d399', '實驗室': '#38bdf8', '未進駐': '#94a3b8' };
             const sets = Object.keys(colors).map(t => ({ label: t, backgroundColor: colors[t],
                 data: rooms.filter(x => x.room.type === t).map(x => ({ x: x.room.area, y: +x.t.kw.toFixed(2), id: x.room.room_id, c: x.room.company })) }));
@@ -617,6 +686,7 @@
         
         // 設定每 5 分鐘背景自動抓取更新一次資料
         setInterval(fetchPowerData, 5 * 60 * 1000);
+        fetchMonthly();
         fetchRooms();
         setInterval(fetchRooms, 5 * 60 * 1000);
 
