@@ -409,3 +409,114 @@ def ac_summary(rows, now):
     }
 
 
+
+
+# ---------------- 外氣溫溼度與小型送風機（ac_logger.ps1 每 5 分鐘一列 FCU_*.csv） ----------------
+def load_fcu_map(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def parse_fcu(texts):
+    """FCU_*.csv → [(datetime, {標籤: float})]，只收 viewer_ok=1 的列。"""
+    out = {}
+    for text in texts:
+        reader = csv.reader(io.StringIO(text.lstrip("﻿")))
+        head = next(reader, None)
+        if not head:
+            continue
+        for r in reader:
+            if len(r) != len(head) or r[1] != "1":
+                continue
+            try:
+                t = datetime.strptime(r[0], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+            vals = {}
+            for tag, v in zip(head[2:], r[2:]):
+                if v:
+                    try:
+                        vals[tag] = float(v)
+                    except ValueError:
+                        pass
+            out[t] = vals
+    return sorted(out.items())
+
+
+def _median(xs):
+    xs = sorted(xs)
+    if not xs:
+        return None
+    n = len(xs)
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+
+
+def outdoor(v, fmap):
+    """外氣溫度、溼度取各 AHU／PAH 感測器的中位數（排除 0 與不合理值）。"""
+    ts = [v[k] for k in fmap["oat"] if k in v and -10 < v[k] < 45 and v[k] != 0]
+    hs = [v[k] for k in fmap["oah"] if k in v and 0 < v[k] <= 100]
+    return _median(ts), _median(hs), len(ts)
+
+
+def fcu_states(v, fmap):
+    """每台 FCU → (fcu, 運轉?, 室溫, 設定溫度, 冷水閥)；室溫只收 5–40 °C。"""
+    out = []
+    for f in fmap["fcu"]:
+        k = f["k"]
+        if k + "_Run" not in v:
+            continue
+        t = v.get(k + "_T")
+        st = v.get(k + "_setT")
+        out.append((f, v[k + "_Run"] > 0.5, t if t is not None and 5 <= t <= 40 else None,
+                    st if st is not None and 10 <= st <= 35 else None, v.get(k + "_CV_State")))
+    return out
+
+
+def fcu_summary(rows, fmap, now):
+    """最新一筆 → 外氣、FCU 開機台數、各棟各樓、各房間；今天每 15 分鐘的外氣溫度與開機台數。"""
+    if not rows:
+        return None, {}
+    t_last, last = rows[-1]
+
+    def r1(x):
+        return None if x is None else round(x, 1)
+
+    def avg(xs):
+        xs = [x for x in xs if x is not None]
+        return sum(xs) / len(xs) if xs else None
+
+    st = fcu_states(last, fmap)
+    oat, oah, n_oat = outdoor(last, fmap)
+    groups, rooms = defaultdict(list), defaultdict(list)
+    for s in st:
+        groups[f"{s[0]['bldg']}棟 {s[0]['floor']}"].append(s)
+        if s[0]["room"]:
+            rooms[s[0]["room"]].append(s)
+
+    def pack(ss):
+        on = [s for s in ss if s[1]]
+        return [len(on), len(ss), r1(avg([s[2] for s in ss])), r1(avg([s[3] for s in on]))]
+
+    buckets = defaultdict(list)
+    for t, v in rows:
+        if t.date() == now.date():
+            buckets[t.replace(minute=t.minute - t.minute % 15, second=0)].append(v)
+    times, oat_s, on_s, tin_s = [], [], [], []
+    for key in sorted(buckets):
+        vs = buckets[key]
+        times.append(key.strftime("%H:%M"))
+        oat_s.append(r1(avg([outdoor(v, fmap)[0] for v in vs])))
+        on_s.append(r1(avg([sum(1 for s in fcu_states(v, fmap) if s[1]) for v in vs])))
+        tin_s.append(r1(avg([avg([s[2] for s in fcu_states(v, fmap)]) for v in vs])))
+    summary = {
+        "time": t_last.strftime("%m/%d %H:%M"),
+        "age_min": round((now - t_last).total_seconds() / 60),
+        "oat_c": r1(oat), "oah_pct": r1(oah), "oat_sensors": n_oat,
+        "on": sum(1 for s in st if s[1]), "n": len(st),
+        "room_t_c": r1(avg([s[2] for s in st])),
+        "room_t_on_c": r1(avg([s[2] for s in st if s[1]])),
+        "set_t_on_c": r1(avg([s[3] for s in st if s[1]])),
+        "groups": {g: pack(ss) for g, ss in sorted(groups.items())},
+        "series": {"times": times, "oat_c": oat_s, "fcu_on": on_s, "room_t_c": tin_s},
+    }
+    return summary, {r: pack(ss) for r, ss in rooms.items()}

@@ -116,6 +116,7 @@
         const ROOMS_URL = EMS_LOCAL ? "/api/ems/rooms.json" : "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/rooms.json";
         const PANEL_ALIAS = { 'EP3D_1': 'EP3D_1_B' };   // 網站盤名 → 監控標籤盤名
         let roomsUpdated = null;
+        let roomsFcu = {};   // 本機版才有：各房間小型送風機 [運轉台數, 台數, 平均室溫, 運轉中平均設定溫度]
 
         function circuitKey(part) {
             const m = part.trim().match(/^(.+?)\s*\((\d+)迴?\)$/);
@@ -270,6 +271,15 @@
                 ${sparkline(v.slice(-24))}<span>近 12 月 ${fmt(l.cur)} 度 ${chg}${room.area ? `<br>${fmt(l.cur / room.area)} 度/坪·年` : ''}</span></div>`;
         }
 
+        function fcuLine(room) {
+            const f = roomsFcu[room.room_id];
+            if (!f) return '';
+            const [on, n, t, st] = f;
+            return `<div class="flex items-center justify-between text-xs mb-3 font-mono" title="空調監控主機的小型送風機（FCU）狀態，每 5 分鐘更新">
+                <span class="${on ? 'text-sky-300' : 'text-slate-500'}"><i class="fa-solid fa-fan mr-1 ${on ? 'fa-spin' : ''}" style="--fa-animation-duration:3s"></i>送風機 ${on}/${n} 台運轉</span>
+                <span class="text-slate-300">室溫 ${fmt(t, 1)}°C${on && st != null ? `・設定 ${fmt(st, 1)}°C` : ''}</span></div>`;
+        }
+
         async function fetchRooms() {
             try {
                 const res = await fetch(ROOMS_URL + "?t=" + Date.now(), { cache: "no-store" });
@@ -277,6 +287,7 @@
                 const data = await res.json();
                 livePowerData = data.circuits;
                 roomsUpdated = data.updated;
+                roomsFcu = data.fcu || {};
                 updateHeader();
                 renderCards();
             } catch (e) {
@@ -378,7 +389,7 @@
                     <p class="text-slate-400 text-sm ${room.area ? 'mb-1' : 'mb-4 pb-3 border-b border-slate-700/60'} truncate font-medium" title="${room.company}">${room.company || '<span class="italic text-slate-600">無進駐單位</span>'}</p>
                     ${room.area ? `<p class="text-xs text-slate-400 mb-4 pb-3 border-b border-slate-700/60 font-mono">${fmt(room.area, 1)} 坪${tot ? ` · <span class="text-sky-300" title="目前用電密度">${fmt(wPerM2(tot.kw, room.area), 1)} W/m²</span> · <span class="text-emerald-300" title="本月每坪用電">${fmt(kwhPerPing(tot.month, room.area), 1)} kWh/坪</span>` : ''}${tot && tot.night != null ? `<br><span class="text-violet-300" title="最近一晚 00:00–06:00 平均">夜間基載 ${fmt(tot.night, 2)} kW</span>${tot.work ? `（上班時段的 ${fmt(tot.night / tot.work * 100)}%）` : ''}` : ''}</p>` : ''}
                     
-                    ${historyLine(room)}
+                    ${fcuLine(room)}${historyLine(room)}
                     <div class="space-y-2 mt-4">
                         ${renderCircuitRow('fa-solid fa-snowflake', 'text-blue-400', '空調', room.circuits['空調'], room.room_id)}
                         ${renderCircuitRow('fa-solid fa-plug', 'text-amber-400', '插座', room.circuits['插座'], room.room_id)}
@@ -447,6 +458,13 @@
                     <p class="text-xs text-slate-400 mt-3 mb-1">磁浮平均負載（%）與冰桶平均液位（%），最近 4 小時</p><div class="h-40"><canvas id="rtAc"></canvas></div>
                     <p class="text-xs mt-2" id="rt-acnote"></p></div>
             </div>
+            <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-temperature-half mr-2 text-orange-300"></i>外氣與小型送風機（FCU）</h3>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div>${rtRow('外氣溫度', 'rt-oat', '°C')}${rtRow('外氣相對溼度', 'rt-oah', '%')}${rtRow('送風機運轉台數', 'rt-fcuon')}${rtRow('平均室溫（運轉中）', 'rt-tin', '°C')}${rtRow('平均設定溫度（運轉中）', 'rt-tset', '°C')}
+                        <p class="text-xs mt-2" id="rt-fcunote"></p></div>
+                    <div class="lg:col-span-2"><p class="text-xs text-slate-400 mb-1">今天每 15 分鐘：外氣溫度（°C）、送風機運轉台數、磁浮平均負載（%）</p><div class="h-48"><canvas id="rtFcu"></canvas></div></div>
+                </div>
+                <div class="mt-4 overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-slate-400 border-b border-slate-700"><th class="pb-2">棟／樓</th><th class="pb-2 text-right">運轉／台數</th><th class="pb-2 text-right">平均室溫</th><th class="pb-2 text-right">運轉中設定</th></tr></thead><tbody id="rt-fcugroups"></tbody></table></div></div>
             <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-chart-column mr-2 text-amber-400"></i>今日各 15 分鐘需量</h3><div class="h-48"><canvas id="rtBars"></canvas></div></div>`;
             const opt = { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { maxTicksLimit: 8 } } } };
             rtCharts.push(new Chart(document.getElementById('rtTrend'), { type: 'line', data: { labels: [], datasets: [
@@ -458,6 +476,12 @@
                 { label: '磁浮負載', data: [], borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0 },
                 { label: '冰桶液位', data: [], borderColor: '#67e8f9', borderWidth: 2, pointRadius: 0, borderDash: [4, 3] }] },
                 options: { ...opt, plugins: { legend: { display: true, labels: { boxWidth: 10 } } }, scales: { ...opt.scales, y: { min: 0, max: 100 } } } }));
+            rtCharts.push(new Chart(document.getElementById('rtFcu'), { type: 'line', data: { labels: [], datasets: [
+                { label: '外氣溫度', data: [], borderColor: '#fdba74', borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
+                { label: '送風機運轉台數', data: [], borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0, yAxisID: 'y1' },
+                { label: '磁浮負載 %', data: [], borderColor: '#a78bfa', borderWidth: 2, pointRadius: 0, borderDash: [4, 3], yAxisID: 'y1' }] },
+                options: { ...opt, plugins: { legend: { display: true, labels: { boxWidth: 10 } } },
+                    scales: { ...opt.scales, y: { position: 'left', title: { display: true, text: '°C' } }, y1: { position: 'right', min: 0, grid: { drawOnChartArea: false }, title: { display: true, text: '台／%' } } } } }));
             updateRT();
         }
         function rtSet(id, v) { const el = document.getElementById(id); if (el) el.innerHTML = v; }
@@ -475,7 +499,7 @@
             rtSet('rt-margin-sub', r >= 1 ? '<span class="text-red-400">推估會超約，請立即降載磁浮</span>' : r >= 0.9 ? '<span class="text-amber-300">接近契約容量（≥90%），準備降載</span>' : '<span class="text-emerald-400">安全</span>');
             rtColor(document.getElementById('rt-c2'), r); rtColor(document.getElementById('rt-c3'), r);
             rtSet('rt-peak', fmt(s.today_peak, 1)); rtSet('rt-peak-sub', s.today_peak_at ? `${s.today_peak_at} 起的 15 分鐘` : '今天還沒有完整時段');
-            const [trend, bars, acc] = rtCharts;
+            const [trend, bars, acc, fcuc] = rtCharts;
             trend.data.labels = rt.trend.map(p => p[0].slice(0, 5));
             trend.data.datasets[0].data = rt.trend.map(p => p[1]);
             trend.data.datasets[1].data = rt.trend.map(() => s.limit);
@@ -509,8 +533,26 @@
                 rtSet('rt-bcukw', fmt(bcu, 1));
                 const m = d.mag_today; rtSet('rt-magday', m ? `${fmt(m.run_hours, 1)} h・最高 ${fmt(m.max_kw, 0)} kW・${fmt(m.kwh, 0)} kWh` : '—');
                 const runs = d.ice_runs || [];
+                updateFcu(d, fcuc);
                 rtSet('rt-iceruns', runs.length ? runs.map(x => `<div class="flex justify-between py-1"><span class="text-slate-300">製冰 ${x.start}–${x.end.slice(6)}</span><span class="font-mono text-white">${fmt(x.hours, 2)} h・${fmt(x.kwh, 0)} kWh</span></div>`).join('') : '<span class="text-slate-400">昨晚到現在沒有製冰</span>');
             }
+        }
+
+        function updateFcu(d, chart) {
+            const f = d.fcu;
+            if (!f) { rtSet('rt-fcunote', '<span class="text-amber-300">還沒有送風機資料（空調監控主機每 5 分鐘記錄一次）</span>'); return; }
+            rtSet('rt-oat', fmt(f.oat_c, 1)); rtSet('rt-oah', fmt(f.oah_pct, 0));
+            rtSet('rt-fcuon', `${f.on}／${f.n} 台`); rtSet('rt-tin', fmt(f.room_t_on_c, 1)); rtSet('rt-tset', fmt(f.set_t_on_c, 1));
+            rtSet('rt-fcunote', f.age_min > 15 ? `<span class="text-amber-300">送風機資料 ${f.age_min} 分鐘沒更新</span>` : `<span class="text-slate-500">資料時間 ${f.time.slice(6)}・外氣取 ${f.oat_sensors} 個 AHU 感測器的中位數</span>`);
+            const sr = f.series || {}, ac = (d.ac && d.ac.series) || {};
+            const magAt = {}; (ac.times || []).forEach((t, i) => magAt[t] = ac.mag_pct[i]);
+            chart.data.labels = sr.times || [];
+            chart.data.datasets[0].data = sr.oat_c || [];
+            chart.data.datasets[1].data = sr.fcu_on || [];
+            chart.data.datasets[2].data = (sr.times || []).map(t => magAt[t] ?? null);
+            chart.update('none');
+            const tb = document.getElementById('rt-fcugroups');
+            if (tb) tb.innerHTML = Object.entries(f.groups || {}).map(([g, [on, n, t, st]]) => `<tr class="border-b border-slate-800"><td class="py-1.5 text-slate-200">${g}</td><td class="py-1.5 text-right font-mono ${on ? 'text-sky-300' : 'text-slate-500'}">${on}／${n}</td><td class="py-1.5 text-right font-mono text-white">${fmt(t, 1)}°C</td><td class="py-1.5 text-right font-mono text-slate-300">${st == null ? '—' : fmt(st, 1) + '°C'}</td></tr>`).join('');
         }
 
         function renderLive(container) {
