@@ -33,15 +33,15 @@
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
         <div class="glass-card px-4 py-3 border-l-4 border-l-blue-400 flex items-center gap-3 h-20">
             <i class="fa-solid fa-building text-xl text-blue-400 hidden sm:block"></i>
-            <div><p class="text-slate-400 text-xs">建檔總空間數</p><p class="text-xl font-bold text-white leading-tight">361</p></div>
+            <div><p class="text-slate-400 text-xs">建檔空間數</p><p id="statRooms" class="text-xl font-bold text-white leading-tight">—</p><p id="statRoomsSub" class="text-[10px] text-slate-500 leading-tight"></p></div>
         </div>
         <div class="glass-card px-4 py-3 border-l-4 border-l-emerald-400 flex items-center gap-3 h-20">
             <i class="fa-solid fa-server text-xl text-emerald-400 hidden sm:block"></i>
-            <div><p class="text-slate-400 text-xs">列管配電盤總數</p><p class="text-xl font-bold text-white leading-tight">137</p></div>
+            <div><p class="text-slate-400 text-xs">對應配電盤</p><p id="statPanels" class="text-xl font-bold text-white leading-tight">—</p><p id="statPanelsSub" class="text-[10px] text-slate-500 leading-tight"></p></div>
         </div>
         <div class="glass-card px-4 py-3 border-l-4 border-l-amber-400 flex items-center gap-3 h-20">
             <i class="fa-solid fa-plug-circle-bolt text-xl text-amber-400 hidden sm:block"></i>
-            <div><p class="text-slate-400 text-xs">總計監測迴路</p><p class="text-xl font-bold text-white leading-tight">2007</p></div>
+            <div><p class="text-slate-400 text-xs">對應迴路</p><p id="statCircuits" class="text-xl font-bold text-white leading-tight">—</p><p id="statCircuitsSub" class="text-[10px] text-slate-500 leading-tight"></p></div>
         </div>
         <div class="glass-card px-3 py-2 h-20 relative">
             <canvas id="typeChart"></canvas>
@@ -57,7 +57,6 @@
             <button onclick="switchTab('C')" id="tab-C" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 border border-transparent transition"><i class="fa-solid fa-building mr-2"></i>C棟</button>
             <button onclick="switchTab('Public')" id="tab-Public" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 border border-transparent transition"><i class="fa-solid fa-fan mr-2"></i>公設機房</button>
             <button onclick="switchTab('EM')" id="tab-EM" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-sky-400 border border-transparent transition"><i class="fa-solid fa-magnifying-glass-chart mr-2"></i>能管分析</button>
-            <button onclick="switchTab('Calc')" id="tab-Calc" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-amber-400 border border-transparent transition"><i class="fa-solid fa-calculator mr-2"></i>分攤模擬器</button>
         </div>
         
         <div class="relative w-full xl:w-80">
@@ -123,13 +122,66 @@
             return `${panel}_${parseInt(m[2], 10)}`;
         }
 
+        // 這幾個盤在監控電腦上沒有分路電表，只有整盤的總表（rooms.json 的 "#盤名"）
+        const NO_BRANCH = { 'ATS1_3': '#ATS_1_3', 'ER2A_1': '#ER2A', 'PB1A': '#PB1A', 'EACMP_1': '#EACMP_1' };
+        const panelOf = key => key.replace(/_\d+$/, '');
+
+        // 房間迴路表的索引：所有迴路、配電盤、各用途、每個盤由哪些空間使用
+        let _cidx = null;
+        function circuitIndex() {
+            if (_cidx) return _cidx;
+            const all = new Set(), byCat = {}, users = {};
+            CATS.forEach(c => byCat[c] = new Set());
+            roomData.forEach(r => Object.entries(r.circuits).forEach(([cat, cs]) => {
+                if (!cs || cs === '-') return;
+                cs.split(' / ').forEach(c => {
+                    const k = circuitKey(c);
+                    if (!k) return;
+                    all.add(k); (byCat[cat] = byCat[cat] || new Set()).add(k);
+                    const p = panelOf(k); (users[p] = users[p] || new Set()).add(r.room_id);
+                });
+            }));
+            const panels = new Set([...all].map(panelOf));
+            return _cidx = { all, byCat, users, panels };
+        }
+
+        function updateHeader() {
+            const idx = circuitIndex();
+            const set = (id, v) => { const e = document.getElementById(id); if (e) e.innerHTML = v; };
+            const pub = roomData.filter(r => r.building === 'Public').length;
+            set('statRooms', fmt(roomData.length));
+            set('statRoomsSub', `A/B/C 棟 ${roomData.length - pub} · 公設機房 ${pub}`);
+            const nb = [...idx.all].filter(k => NO_BRANCH[panelOf(k)]);
+            set('statPanels', fmt(idx.panels.size));
+            set('statCircuits', fmt(idx.all.size));
+            if (!roomsUpdated) { set('statCircuitsSub', '讀取電表中…'); return; }
+            const livePanels = new Set(Object.keys(livePowerData).filter(k => !k.startsWith('#')).map(panelOf));
+            const metered = [...idx.all].filter(k => livePowerData[k]).length;
+            set('statPanelsSub', `監控電腦共 ${livePanels.size} 盤`);
+            set('statCircuitsSub', `有電表 ${fmt(metered)} · 無分路電表 ${nb.length}`);
+        }
+
+        // 沒有分路電表的盤：顯示整盤總表，並註明和哪些空間共用（不計入房間合計，避免重複）
+        function noBranchHTML(circuitString, selfId) {
+            const panels = [...new Set(circuitString.split(' / ').map(circuitKey).filter(k => k && NO_BRANCH[panelOf(k)]).map(panelOf))];
+            if (!panels.length) return null;
+            return panels.map(p => {
+                const v = livePowerData[NO_BRANCH[p]];
+                const others = [...(circuitIndex().users[p] || [])].filter(x => x !== selfId);
+                const share = others.length ? `與 ${others.slice(0, 3).join('、')}${others.length > 3 ? ' 等' : ''} 共用` : '';
+                return `<div class="flex flex-col items-end leading-tight" title="${p.replace(/_/g, '-')} 盤沒有分路電表，這裡是整盤總表，不計入本空間合計">
+                    <span class="text-amber-300 text-xs font-bold"><i class="fa-solid fa-circle-info mr-1"></i>${p.replace(/_/g, '-')} 無分路電表</span>
+                    <span class="text-slate-400 text-[10px]">${v ? `整盤本月 ${v[2] != null ? v[2].toFixed(1) : '—'} kWh · 目前 ${(v[0] || 0).toFixed(1)} kW` : '整盤總表讀取中'}${share ? ' · ' + share : ''}</span></div>`;
+            }).join('');
+        }
+
         // 一個用途（例如「插座」）的所有迴路加總；回傳 null 表示沒有任何迴路有資料
         function sumCircuits(circuitString) {
             if (!circuitString || circuitString === '-') return null;
             let kw = 0, today = 0, month = 0, night = 0, work = 0, hasNight = false, hasWork = false, found = 0, total = 0;
             circuitString.split(' / ').forEach(c => {
                 const key = circuitKey(c);
-                if (!key) return;
+                if (!key || NO_BRANCH[panelOf(key)]) return;
                 total++;
                 const v = livePowerData[key];
                 if (!v) return;
@@ -153,7 +205,7 @@
         // 同一房間內重複列出的迴路只算一次
         function roomTotals(room) {
             const keys = new Set();
-            Object.values(room.circuits).forEach(cs => (cs && cs !== '-') && cs.split(' / ').forEach(c => { const k = circuitKey(c); if (k) keys.add(k); }));
+            Object.values(room.circuits).forEach(cs => (cs && cs !== '-') && cs.split(' / ').forEach(c => { const k = circuitKey(c); if (k && !NO_BRANCH[panelOf(k)]) keys.add(k); }));
             let kw = 0, today = 0, month = 0, night = null, work = null, any = false;
             keys.forEach(k => {
                 const v = livePowerData[k];
@@ -188,7 +240,7 @@
         // 近 12 個月與前 12 個月
         function last12(series) {
             const n = series.length, cur = sum(series.slice(n - 12)), prev = n >= 24 ? sum(series.slice(n - 24, n - 12)) : null;
-            return { cur, prev, chg: prev ? (cur - prev) / prev * 100 : null };
+            return { cur, prev, chg: prev >= 500 ? (cur - prev) / prev * 100 : null };   // 前一年幾乎沒用電（新進駐）時不算百分比
         }
         function sparkline(vals, w = 120, h = 28) {
             const max = Math.max(...vals, 1);
@@ -211,6 +263,7 @@
                 const data = await res.json();
                 livePowerData = data.circuits;
                 roomsUpdated = data.updated;
+                updateHeader();
                 renderCards();
             } catch (e) {
                 console.error('房間資料讀取失敗', e);
@@ -224,10 +277,12 @@
 
         Chart.defaults.color = '#cbd5e1';
         // 繪製圓餅圖
+        // 各用途對應的迴路數（同一用途內重複的迴路只算一次），由房間迴路表自動計算
+        const CATS = ['插座', '照明', '空調', '動力'];
         const ctx = document.getElementById('typeChart').getContext('2d');
         new Chart(ctx, {
             type: 'doughnut',
-            data: { labels: ['插座', '照明', '空調', '動力'], datasets: [{ data: [754, 687, 187, 379], backgroundColor: ['#f59e0b', '#fde047', '#38bdf8', '#f87171'], borderWidth: 0, hoverOffset: 4 }] },
+            data: { labels: CATS, datasets: [{ data: CATS.map(c => circuitIndex().byCat[c].size), backgroundColor: ['#f59e0b', '#fde047', '#38bdf8', '#f87171'], borderWidth: 0, hoverOffset: 4 }] },
             options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#cbd5e1', boxWidth: 10, font: {size: 10} } } }, cutout: '70%' }
         });
 
@@ -248,13 +303,16 @@
         // ==========================================
         // 渲染單行迴路資訊 (支援 HTML 解析)
         // ==========================================
-        function renderCircuitRow(iconClass, colorClass, label, circuitStr) {
+        function renderCircuitRow(iconClass, colorClass, label, circuitStr, roomId) {
             let content = `<span class="text-xs text-slate-600 italic">無配置</span>`;
             
             if (circuitStr && circuitStr !== '-') {
                 const calculatedHTML = calculateKwh(circuitStr);
                 
-                if (calculatedHTML !== circuitStr) {
+                const nb = noBranchHTML(circuitStr, roomId);
+                if (nb) {
+                    content = `<span class="max-w-[75%] text-right space-y-1" title="包含迴路: ${circuitStr}">${calculatedHTML !== circuitStr ? calculatedHTML : ''}${nb}</span>`;
+                } else if (calculatedHTML !== circuitStr) {
                     // 如果成功算出數字並轉為 HTML，直接顯示 (不加 badge 背景框)
                     content = `<span class="max-w-[70%] text-right font-mono" title="包含迴路: ${circuitStr}">${calculatedHTML}</span>`;
                 } else {
@@ -279,31 +337,6 @@
             liveCharts = [];
             if (currentTab === 'Live') { renderLive(container); return; }
             if (currentTab === 'EM') { renderEM(container); return; }
-            if (currentTab === 'Calc') {
-                container.innerHTML = `
-                <div class="glass-card p-6 bg-gradient-to-br from-slate-800/90 to-blue-900/60 border-blue-500/40 col-span-full md:col-span-2 xl:col-span-2 shadow-2xl">
-                    <h3 class="text-2xl font-bold mb-2 text-amber-400 drop-shadow-md"><i class="fa-solid fa-calculator mr-3"></i>空調佔比分攤引擎 (展示版)</h3>
-                    <p class="text-sm text-slate-300 mb-8 border-b border-slate-600 pb-4">系統將抓取本月「公設與機房」總度數，並依據左側各廠商空調耗電比例進行精密費用拆解。</p>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                        <div>
-                            <label class="text-sm text-blue-300 mb-2 block font-bold">1. 輸入台電總帳單金額</label>
-                            <input type="text" value="$ 1,520,400" disabled class="w-full bg-slate-900 border border-slate-600 rounded px-4 py-3 text-white font-mono text-xl shadow-inner">
-                        </div>
-                        <div>
-                            <label class="text-sm text-emerald-400 mb-2 block font-bold">2. 系統初估公設待攤提總額</label>
-                            <input type="text" value="$ 45,612 (約佔 3%)" disabled class="w-full bg-emerald-900/20 border border-emerald-600/50 rounded px-4 py-3 text-emerald-300 font-mono text-xl shadow-inner">
-                        </div>
-                    </div>
-                    <div class="p-4 bg-slate-900/60 rounded-lg mb-6 space-y-4 text-sm font-mono border border-slate-700">
-                        <div class="flex justify-between items-center text-slate-400"><span>A108 實驗室空調佔比試算:</span><span class="text-white bg-slate-700 px-2 py-1 rounded">12.4%</span></div>
-                        <div class="flex justify-between items-center border-t border-slate-700 pt-4 font-bold text-lg"><span class="text-blue-300">A108 本月公設應攤提:</span><span class="text-white bg-blue-500/30 px-4 py-2 rounded border border-blue-400/50 shadow-[0_0_10px_rgba(59,130,246,0.3)]">$ 5,655</span></div>
-                    </div>
-                    <button class="w-full bg-blue-500 hover:bg-blue-400 text-white font-bold py-3 px-4 rounded-lg transition shadow-[0_0_20px_rgba(59,130,246,0.4)] transform hover:-translate-y-0.5 text-lg">
-                        <i class="fa-solid fa-microchip mr-2"></i>啟動全區自動結算演算
-                    </button>
-                </div>`;
-                return;
-            }
 
             let filtered = roomData.filter(r => r.building === currentTab);
             if (query) {
@@ -332,10 +365,10 @@
                     
                     ${historyLine(room)}
                     <div class="space-y-2 mt-4">
-                        ${renderCircuitRow('fa-solid fa-snowflake', 'text-blue-400', '空調', room.circuits['空調'])}
-                        ${renderCircuitRow('fa-solid fa-plug', 'text-amber-400', '插座', room.circuits['插座'])}
-                        ${renderCircuitRow('fa-solid fa-gears', 'text-red-400', '動力', room.circuits['動力'])}
-                        ${renderCircuitRow('fa-regular fa-lightbulb', 'text-yellow-300', '照明', room.circuits['照明'])}
+                        ${renderCircuitRow('fa-solid fa-snowflake', 'text-blue-400', '空調', room.circuits['空調'], room.room_id)}
+                        ${renderCircuitRow('fa-solid fa-plug', 'text-amber-400', '插座', room.circuits['插座'], room.room_id)}
+                        ${renderCircuitRow('fa-solid fa-gears', 'text-red-400', '動力', room.circuits['動力'], room.room_id)}
+                        ${renderCircuitRow('fa-regular fa-lightbulb', 'text-yellow-300', '照明', room.circuits['照明'], room.room_id)}
                     </div>
                 </div>`;
                 container.insertAdjacentHTML('beforeend', card);
@@ -491,7 +524,7 @@
                 ${tile('進駐單位', nUnits, '家', `研究法人 ${P.units['研究法人']}、廠商 ${P.units['廠商']}`, 'border-l-indigo-400')}
                 ${tile('規劃出租面積', fmt(P.planned, 1), '坪', `法人 ${fmt(P.plannedSplit['法人空間'], 1)}＋廠商 ${fmt(P.plannedSplit['廠商空間'], 1)}`, 'border-l-slate-400')}
                 ${tile('實際使用面積', fmt(used, 1), '坪', `工研院 ${fmt(P.used['工研院'], 0)}、廠商 ${fmt(P.used['廠商'], 0)}、資策會 ${fmt(P.used['資策會'], 0)}`, 'border-l-cyan-400')}
-                ${tile('進駐率', fmt(used / P.planned * 100), '%', '實際使用 ÷ 規劃出租面積；超過 100% 是部分公共空間也已出租使用', 'border-l-emerald-400')}
+                ${tile('進駐率', fmt(used / P.planned * 100), '%', '實際使用 ÷ 規劃出租面積；超過 100% 是因為部分原本的公共或大型空間（例如溫室中心、儲藏室）已改為辦公室或實驗室出租使用', 'border-l-emerald-400')}
             </div>
             <div class="col-span-full">${emTable('面積占比與用電占比', 'fa-solid fa-scale-balanced', 'text-indigo-300',
                 `面積依 ${P.date} 空間清單；用電為各類別房間迴路最近 15 分鐘合計。用電占比明顯高於面積占比的類別，就是節能溝通的優先對象。`,
@@ -538,6 +571,50 @@
                 <tbody>${rows.length ? rows.map(r => `<tr class="border-b border-slate-700/50">${r.map((c, i) => `<td class="py-1.5 pr-3 ${i > 1 ? 'text-right font-mono' : ''} ${i === 0 ? 'font-bold text-white' : 'text-slate-300'} whitespace-nowrap">${c}</td>`).join('')}</tr>`).join('') : `<tr><td class="py-3 text-slate-500" colspan="${head.length}">${empty}</td></tr>`}</tbody></table></div></div>`;
         }
 
+        // 迴路資料檢查：找出對照表可能有誤、或電表沒有讀值的地方
+        function auditSection() {
+            const idx = circuitIndex();
+            const full = Object.values(livePowerData).some(v => v && v[3] != null);   // 至少有一整晚資料才判斷「沒讀值」
+            const rows = [];
+            const users = p => [...(idx.users[p] || [])];
+            const list = a => a.slice(0, 4).join('、') + (a.length > 4 ? ` 等 ${a.length} 處` : '');
+            // 1. 沒有分路電表
+            Object.keys(NO_BRANCH).filter(p => idx.panels.has(p)).forEach(p => {
+                const n = [...idx.all].filter(k => panelOf(k) === p).length;
+                rows.push([p.replace(/_/g, '-'), '<span class="text-amber-300">無分路電表</span>', n, list(users(p))]);
+            });
+            // 2. 表上有、監控電腦沒有
+            const missing = [...idx.all].filter(k => !NO_BRANCH[panelOf(k)] && !livePowerData[k]);
+            [...new Set(missing.map(panelOf))].forEach(p => {
+                const ks = missing.filter(k => panelOf(k) === p);
+                rows.push([p.replace(/_/g, '-'), '<span class="text-red-400">找不到電表</span>', ks.length, list(users(p))]);
+            });
+            // 3. 整盤本月都是 0
+            if (full) [...idx.panels].filter(p => !NO_BRANCH[p]).forEach(p => {
+                const ks = [...idx.all].filter(k => panelOf(k) === p && livePowerData[k]);
+                if (ks.length && ks.every(k => !(livePowerData[k][2] > 0))) {
+                    const all42 = Object.keys(livePowerData).filter(k => panelOf(k) === p);
+                    const dead = all42.every(k => !(livePowerData[k][2] > 0));
+                    rows.push([p.replace(/_/g, '-'), `<span class="text-orange-300">${dead ? '整盤都沒讀值' : '對應迴路都是 0'}</span>`, ks.length, list(users(p))]);
+                }
+            });
+            // 4. 帳單有用電、迴路卻是 0
+            const billRows = full && monthly ? roomData.map(r => {
+                const v = monthly.rooms[r.room_id]; const last = v ? v[v.length - 1] : null;
+                const t = roomTotals(r);
+                return { r, last, m: t ? t.month : null };
+            }).filter(x => x.last >= 1000 && x.m !== null && x.m < 1).sort((a, b) => b.last - a.last)
+              .map(x => [x.r.room_id, x.r.company || '—', fmt(x.last), fmt(x.m, 1)]) : [];
+            return `<div class="col-span-full grid grid-cols-1 xl:grid-cols-2 gap-6">
+                ${emTable('迴路對照檢查', 'fa-solid fa-list-check', 'text-amber-300',
+                    `網站共對應 ${fmt(idx.panels.size)} 個配電盤、${fmt(idx.all.size)} 個迴路，逐一和監控電腦的電表標籤比對。無分路電表：只有整盤總表，房間卡片改顯示整盤用電並註明共用。找不到電表：盤名或迴路編號要確認。整盤都沒讀值：電表通訊或 InTouch 標籤可能沒更新。對應迴路都是 0：同盤其他迴路有讀值，可能迴路編號對錯。${full ? '' : '「沒讀值」要等累積一整晚的資料後才開始判斷。'}`,
+                    ['盤', '狀況', '迴路', '使用空間'], rows, '全部迴路都有對應的電表')}
+                ${emTable('帳單有用電、迴路卻是 0', 'fa-solid fa-scale-unbalanced', 'text-red-400',
+                    `上個月分攤表超過 1,000 度，但本月迴路累計不到 1 度的空間，最可能是迴路對照錯誤。${full ? '' : '資料累積一整晚後開始判斷。'}`,
+                    ['空間', '單位', `${monthly ? monthly.months[monthly.months.length - 1] : ''} 度`, '本月迴路 kWh'], billRows, full ? '沒有發現' : '資料累積中')}
+            </div>`;
+        }
+
         function renderEM(container) {
             if (!roomsUpdated) {
                 container.innerHTML = `<div class="col-span-full text-center text-slate-500 py-16"><i class="fa-solid fa-spinner fa-spin text-4xl mb-4 block"></i>各房間用電資料載入中...</div>`;
@@ -581,6 +658,7 @@
 
             container.innerHTML = `
             ${occupancySection(occ)}
+            ${auditSection()}
             ${historySection()}
             <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 ${tile('有迴路資料的進駐面積', fmt(areaAll), '坪', `${occ.length} 間有迴路資料；空置 ${fmt(sum(vacant, x => x.room.area))} 坪`, 'border-l-blue-400')}
@@ -690,6 +768,7 @@
         
         // 設定每 5 分鐘背景自動抓取更新一次資料
         setInterval(fetchPowerData, 5 * 60 * 1000);
+        updateHeader();
         fetchMonthly();
         fetchRooms();
         setInterval(fetchRooms, 5 * 60 * 1000);
