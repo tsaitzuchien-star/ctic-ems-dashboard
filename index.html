@@ -50,7 +50,8 @@
 
     <div class="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-6 border-b border-slate-700 pb-4 sticky top-0 bg-[#0f172a]/90 backdrop-blur-md z-10 py-4 px-2 -mx-2 rounded-lg">
         <div class="flex flex-wrap gap-2 w-full xl:w-auto" id="tabsContainer">
-            <button onclick="switchTab('A')" id="tab-A" class="tab-btn active px-4 py-2 rounded-lg bg-blue-500/20 text-blue-300 font-bold border border-blue-400 transition"><i class="fa-solid fa-building mr-2"></i>A棟</button>
+            <button onclick="switchTab('Live')" id="tab-Live" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-emerald-400 border border-transparent transition"><i class="fa-solid fa-gauge-high mr-2"></i>即時總覽</button>
+            <button onclick="switchTab('A')" id="tab-A" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 border border-transparent transition"><i class="fa-solid fa-building mr-2"></i>A棟</button>
             <button onclick="switchTab('B')" id="tab-B" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 border border-transparent transition"><i class="fa-solid fa-building mr-2"></i>B棟</button>
             <button onclick="switchTab('C')" id="tab-C" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 border border-transparent transition"><i class="fa-solid fa-building mr-2"></i>C棟</button>
             <button onclick="switchTab('Public')" id="tab-Public" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 border border-transparent transition"><i class="fa-solid fa-fan mr-2"></i>公設機房</button>
@@ -69,7 +70,11 @@
         // 時鐘功能
         setInterval(() => document.getElementById('datetime').innerText = new Date().toLocaleString('zh-TW'), 1000);
 
-        // 🌟 你的 GAS Web App URL
+        // 園區即時總覽：Smart-Energy-Dashboard 的 GitHub Actions 每 15 分鐘把監控電腦匯出的度數整理成 live.json
+        const LIVE_URL = "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/live.json";
+        let liveData = null;
+        let liveCharts = [];
+        // 🌟 你的 GAS Web App URL（舊版各迴路度數來源，尚未啟用）
         const API_URL = "https://script.google.com/macros/s/AKfycbxfD_P4st7d0qT31dup8b8EG9MKJWbIIr3i6DsSIBnNTsbSgT_z5JHqRfqEHmPIb127/exec";
         
         // 存放來自 GAS 的即時度數資料
@@ -85,24 +90,17 @@
         async function fetchPowerData() {
             const statusIndicator = document.getElementById('statusText');
             try {
-                statusIndicator.innerHTML = '<i class="fa-solid fa-wifi mr-1 animate-pulse text-blue-400"></i> 即時資料抓取中...';
-                statusIndicator.className = "text-sm text-blue-400 mt-1 font-mono";
-
-                // 在網址後面加上時間戳，強迫瀏覽器每次都去要最新的資料！
-                const noCacheUrl = API_URL + "?t=" + new Date().getTime();
-                const response = await fetch(noCacheUrl);
-                const apiResult = await response.json();
-                
-                // 💡 關鍵修正：相容我們新版 GAS 輸出的 powerData 結構
-                livePowerData = apiResult.powerData || apiResult; 
-                
-                statusIndicator.innerHTML = `<i class="fa-solid fa-cloud-arrow-down mr-1 text-emerald-400"></i> API 資料已同步 (${new Date().toLocaleTimeString()})`;
-                statusIndicator.className = "text-sm text-emerald-400 mt-1 font-mono";
-                
-                renderCards(); 
+                const res = await fetch(LIVE_URL + "?t=" + Date.now(), { cache: "no-store" });
+                if (!res.ok) throw new Error(res.status);
+                liveData = await res.json();
+                const age = (Date.now() - new Date(liveData.updated.replace(' ', 'T') + ':00+08:00')) / 60000;
+                const stale = age > 60;
+                statusIndicator.innerHTML = `<i class="fa-solid ${stale ? 'fa-triangle-exclamation' : 'fa-cloud-arrow-down'} mr-1"></i> 資料時間 ${liveData.updated}${stale ? '（超過 1 小時未更新）' : ''}`;
+                statusIndicator.className = `text-sm ${stale ? 'text-amber-400' : 'text-emerald-400'} mt-1 font-mono`;
+                if (currentTab === 'Live') renderCards();
             } catch (error) {
                 console.error("抓取資料失敗:", error);
-                statusIndicator.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1 text-red-400"></i> 連線失敗，顯示靜態資料';
+                statusIndicator.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1 text-red-400"></i> 即時資料連線失敗';
                 statusIndicator.className = "text-sm text-red-400 mt-1 font-mono";
             }
         }
@@ -220,6 +218,9 @@
             const query = document.getElementById('searchInput').value.trim().toLowerCase();
             container.innerHTML = '';
             
+            liveCharts.forEach(c => c.destroy());
+            liveCharts = [];
+            if (currentTab === 'Live') { renderLive(container); return; }
             if (currentTab === 'Calc') {
                 container.innerHTML = `
                 <div class="glass-card p-6 bg-gradient-to-br from-slate-800/90 to-blue-900/60 border-blue-500/40 col-span-full md:col-span-2 xl:col-span-2 shadow-2xl">
@@ -279,8 +280,117 @@
             });
         }
 
-        // 初始化：開啟 A 棟並立即觸發資料抓取
-        switchTab('A');
+        // ==========================================
+        // 即時總覽（只放園區層級彙總，不放個別廠商）
+        // ==========================================
+        const fmt = (v, d = 0) => (v === null || v === undefined) ? '—' : Number(v).toLocaleString('zh-TW', { maximumFractionDigits: d, minimumFractionDigits: d });
+        const PALETTE = ['#38bdf8', '#fbbf24', '#f87171', '#34d399', '#a78bfa', '#94a3b8'];
+
+        function tile(label, value, unit, sub, color) {
+            return `<div class="glass-card p-5 border-l-4 ${color}">
+                <p class="text-slate-400 text-xs md:text-sm">${label}</p>
+                <p class="text-2xl md:text-3xl font-bold text-white font-mono">${value}<span class="text-sm font-normal text-slate-400 ml-1">${unit}</span></p>
+                <p class="text-xs text-slate-400 mt-1">${sub}</p></div>`;
+        }
+
+        function renderLive(container) {
+            const d = liveData;
+            if (!d) {
+                container.innerHTML = `<div class="col-span-full text-center text-slate-500 py-16"><i class="fa-solid fa-spinner fa-spin text-4xl mb-4 block"></i>即時資料載入中...</div>`;
+                return;
+            }
+            const margin = (d.last15_kw === null) ? null : d.limit_kw - d.last15_kw;
+            const pct = (d.last15_kw === null) ? 0 : Math.min(100, d.last15_kw / d.limit_kw * 100);
+            const barColor = pct >= 95 ? 'bg-red-500' : pct >= 85 ? 'bg-amber-400' : 'bg-emerald-400';
+            const plant = Object.entries(d.plant_now || {}).filter(([, v]) => v >= 0.5);
+            container.innerHTML = `
+            <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                ${tile('目前即時負載', fmt(d.now_kw), 'kW', 'BMS 總表即時值', 'border-l-blue-400')}
+                ${tile('最近 15 分鐘需量', fmt(d.last15_kw), 'kW', `${d.period}契約 ${fmt(d.limit_kw)} kW，餘裕 <b class="${margin !== null && margin < 30 ? 'text-red-400' : 'text-emerald-400'}">${fmt(margin)} kW</b>`, 'border-l-emerald-400')}
+                ${tile('今日最高需量', fmt(d.today_peak_kw), 'kW', d.today_peak_at ? `發生於 ${d.today_peak_at}` : '', 'border-l-amber-400')}
+                ${tile('今日累計用電', fmt(d.today_kwh), 'kWh', `00:00 至 ${d.updated.slice(11)}`, 'border-l-purple-400')}
+            </div>
+            <div class="col-span-full glass-card p-5">
+                <div class="flex justify-between text-sm mb-2"><span class="text-slate-300">契約容量使用率（${d.period}）</span><span class="font-mono text-white">${pct.toFixed(0)}%</span></div>
+                <div class="w-full h-3 bg-slate-700 rounded-full overflow-hidden"><div class="${barColor} h-3 rounded-full" style="width:${pct}%"></div></div>
+            </div>
+            <div class="col-span-full glass-card p-5">
+                <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-chart-line mr-2 text-blue-400"></i>今日 15 分鐘需量</h3>
+                <p class="text-xs text-slate-400 mb-3">實線：總表實測；虛線：預測系統的逐時預測；紅線：當時段契約上限</p>
+                <div class="h-72"><canvas id="liveTotal"></canvas></div>
+            </div>
+            <div class="col-span-full grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="glass-card p-5">
+                <h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-snowflake mr-2 text-blue-400"></i>空調主機房</h3>
+                ${plant.length ? plant.map(([k, v]) => `<div class="flex justify-between text-sm py-1 border-b border-slate-700/50"><span class="text-slate-300">${k}</span><span class="font-mono text-white">${fmt(v, 1)} kW</span></div>`).join('') : '<p class="text-slate-500 text-sm">目前主機與泵浦都未運轉</p>'}
+                <p class="text-xs text-slate-500 mt-3">只列運轉中的設備（最近 15 分鐘平均）</p>
+            </div>
+            <div class="glass-card p-5">
+                <h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-layer-group mr-2 text-amber-400"></i>各樓層配電盤</h3>
+                <div class="h-64"><canvas id="liveFloors"></canvas></div>
+            </div>
+            <div class="glass-card p-5">
+                <h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-chart-pie mr-2 text-emerald-400"></i>用電組成（最近 15 分鐘）</h3>
+                <div class="h-64"><canvas id="liveCats"></canvas></div>
+                <p class="text-xs text-slate-500 mt-2">樓層盤依盤名分類：L 照明、R 插座、P 動力、SP 空調箱。</p>
+            </div>
+            </div>`;
+            drawLiveCharts(d);
+        }
+
+        function lastOf(series) {
+            return Object.fromEntries(Object.entries(series || {}).map(([k, v]) => [k, v[v.length - 1] || 0]));
+        }
+
+        function drawLiveCharts(d) {
+            Chart.defaults.color = '#cbd5e1';
+            const grid = { color: 'rgba(148,163,184,0.15)' };
+            // 全日 00:00–23:45 的時間軸
+            const labels = Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, '0')}:${String(i % 4 * 15).padStart(2, '0')}`);
+            const actual = labels.map(t => { const i = d.times.indexOf(t); return i >= 0 ? d.total[i] : null; });
+            const fc = labels.map(t => t.endsWith(':00') && d.forecast[t] !== undefined ? d.forecast[t] : null);
+            const limitAt = t => {
+                const h = +t.slice(0, 2), m = +t.slice(5, 7) || 0;
+                const day = new Date(d.updated.slice(0, 10) + 'T12:00:00+08:00');
+                const wd = day.getDay(), md = (day.getMonth() + 1) * 100 + day.getDate();
+                const summer = md >= 516 && md <= 1015;
+                if (wd === 0) return d.limits['離峰'];
+                if (wd === 6) return (summer && h >= 9) ? d.limits['週六半尖峰'] : d.limits['離峰'];
+                if (summer) return (h >= 16 && h < 22) ? d.limits['尖峰'] : (h >= 9 && h < 24) ? d.limits['半尖峰'] : d.limits['離峰'];
+                return ((h >= 6 && h < 11) || (h >= 14 && h < 24)) ? d.limits['半尖峰'] : d.limits['離峰'];
+            };
+            liveCharts.push(new Chart(document.getElementById('liveTotal'), {
+                type: 'line',
+                data: { labels, datasets: [
+                    { label: '實測', data: actual, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: true, pointRadius: d.times.length < 8 ? 3 : 0, tension: 0.2 },
+                    { label: '預測', data: fc, borderColor: '#fbbf24', borderDash: [6, 4], pointRadius: 2, spanGaps: true },
+                    { label: '契約上限', data: labels.map(limitAt), borderColor: '#f87171', pointRadius: 0, borderWidth: 1.5, stepped: true }
+                ] },
+                options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                    scales: { x: { grid, ticks: { maxTicksLimit: 12 } }, y: { grid, beginAtZero: true, title: { display: true, text: 'kW' } } } }
+            }));
+            const floors = lastOf(d.floors);
+            const order = ['B1', '1F', '2F', '3F', '4F'].filter(k => k in floors);
+            liveCharts.push(new Chart(document.getElementById('liveFloors'), {
+                type: 'bar',
+                data: { labels: order, datasets: [{ label: 'kW', data: order.map(k => floors[k]), backgroundColor: '#fbbf24', borderRadius: 6 }] },
+                options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } },
+                    scales: { x: { grid, title: { display: true, text: 'kW（最近 15 分鐘平均）' } }, y: { grid: { display: false } } } }
+            }));
+            const feeders = lastOf(d.feeders), cats = lastOf(d.cats);
+            const parts = { '空調主機房': feeders['空調主機房'] || 0 };
+            ['空調箱', '照明', '插座', '動力'].forEach(k => { if (cats[k]) parts[k] = cats[k]; });
+            liveCharts.push(new Chart(document.getElementById('liveCats'), {
+                type: 'doughnut',
+                data: { labels: Object.keys(parts), datasets: [{ data: Object.values(parts).map(v => +v.toFixed(1)), backgroundColor: PALETTE, borderWidth: 0 }] },
+                options: { responsive: true, maintainAspectRatio: false, cutout: '60%',
+                    plugins: { legend: { position: 'right', labels: { boxWidth: 10 } },
+                        tooltip: { callbacks: { label: c => `${c.label}：${c.parsed} kW` } } } }
+            }));
+        }
+
+        // 初始化：開啟即時總覽並立即觸發資料抓取
+        switchTab('Live');
         fetchPowerData();
         
         // 設定每 5 分鐘背景自動抓取更新一次資料
