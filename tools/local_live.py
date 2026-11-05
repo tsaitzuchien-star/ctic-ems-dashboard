@@ -25,6 +25,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import ems_calc
+import line_push
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(HERE, "local_live_state.json")
@@ -504,6 +505,8 @@ def main():
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     log(f"本機即時網站啟動：http://localhost:{PORT}/")
     ac, ac_at, mag = None, 0.0, None
+    notifier, ems_data = line_push.Notifier(), None
+    log("LINE 推播：" + ("已啟用" if notifier.enabled else "未設定（沒有 line_token.txt）"))
     circ, circ_at = Circuits(), 0.0
     ac_trend = deque(maxlen=720)          # 每分鐘一點，保留 12 小時
     while True:
@@ -522,6 +525,7 @@ def main():
                 try:
                     circ.read(reader.conv, now)
                     data, rooms = circ.build(now, read_ac_rows(now))
+                    ems_data = data
                     # 本程式啟動前的時段用全迴路總表度數補（總表 kWh 與台電同基準）
                     if dem.day == now.date().isoformat():
                         for hm, v in zip(data["times"], data["total"]):
@@ -538,10 +542,12 @@ def main():
                 LIVE.update({"ok": True, "time": now.strftime("%H:%M:%S"), "offset": TAIPOWER_OFFSET,
                              "demand": snap, "trend": list(dem.trend), "ac": ac, "mag": mag,
                              "ac_trend_keys": AC_TREND_KEYS, "ac_trend": list(ac_trend)})
+            notifier.tick(now, True, snap, ac, mag, ems_data)
         except Exception as e:
             with STATE_LOCK:
                 LIVE.clear()
                 LIVE.update({"ok": False, "error": f"讀不到 InTouch（WindowViewer 有開嗎？）{type(e).__name__}"})
+            notifier.tick(now, False, None, ac, mag, ems_data)
             log(f"讀取失敗：{type(e).__name__}: {e}")
             time.sleep(25)
         time.sleep(max(0.5, SAMPLE_S - (time.time() - t0)))
