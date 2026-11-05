@@ -222,7 +222,7 @@ main{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,mi
 .c .l{color:var(--m);font-size:13px}.c .v{font-size:38px;font-weight:700;font-variant-numeric:tabular-nums;margin:4px 0}
 .c .v small{font-size:16px;color:var(--m);font-weight:400;margin-left:4px}.wide{grid-column:1/-1}
 .bar{height:10px;background:var(--line);border-radius:5px;overflow:hidden;margin-top:8px}.bar i{display:block;height:100%}
-.row{display:flex;justify-content:space-between;padding:4px 0;font-size:15px}.row b{font-variant-numeric:tabular-nums}
+.row{display:flex;justify-content:space-between;gap:12px;padding:4px 0;font-size:15px}.row span{white-space:nowrap}.row b{text-align:right}.row b{font-variant-numeric:tabular-nums}
 canvas{width:100%;height:240px;display:block}
 .ok{border-left-color:var(--ok)}.warn{border-left-color:var(--warn)}.bad{border-left-color:var(--bad)}
 .err{color:var(--bad)}
