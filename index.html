@@ -671,9 +671,12 @@
         // 園區空間概況（2026/11/2 空間清單；規劃面積＝法人空間＋廠商空間，不含公共空間）
         const PARK_SPACE = {
             date: '2026/11/2', planned: 3536.91, plannedSplit: { '法人空間': 1920.58, '廠商空間': 1616.33 },
-            used: { '工研院': 1993.70, '廠商': 1856.04, '資策會': 84.39 }, units: { '研究法人': 2, '廠商': 25 }
+            // 清單原分 工研院 1993.70／廠商 1856.04／資策會 84.39；最大廠商環電（657.34）單獨列，資策會量體小併入其他廠商
+            used: { '工研院': 1993.70, '環電': 657.34, '其他廠商': 1856.04 - 657.34 + 84.39 }, units: { '研究法人': 2, '廠商': 25 }
         };
-        const orgOf = r => (r.org === '中創' ? '工研院' : r.org);
+        const orgOf = r => (r.org === '中創' ? '工研院'
+            : r.company === '環電' ? '環電'
+            : (r.org === '廠商' || r.org === '資策會') ? '其他廠商' : r.org);
 
         function occupancySection(occ) {
             const P = PARK_SPACE;
@@ -690,11 +693,11 @@
             <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 ${tile('進駐單位', nUnits, '家', `研究法人 ${P.units['研究法人']}、廠商 ${P.units['廠商']}`, 'border-l-indigo-400')}
                 ${tile('規劃出租面積', fmt(P.planned, 1), '坪', `法人 ${fmt(P.plannedSplit['法人空間'], 1)}＋廠商 ${fmt(P.plannedSplit['廠商空間'], 1)}`, 'border-l-slate-400')}
-                ${tile('實際使用面積', fmt(used, 1), '坪', `工研院 ${fmt(P.used['工研院'], 0)}、廠商 ${fmt(P.used['廠商'], 0)}、資策會 ${fmt(P.used['資策會'], 0)}`, 'border-l-cyan-400')}
+                ${tile('實際使用面積', fmt(used, 1), '坪', `工研院 ${fmt(P.used['工研院'], 0)}、環電 ${fmt(P.used['環電'], 0)}、其他廠商 ${fmt(P.used['其他廠商'], 0)}`, 'border-l-cyan-400')}
                 ${tile('進駐率', fmt(used / P.planned * 100), '%', '實際使用 ÷ 規劃出租面積；超過 100% 是因為部分原本的公共或大型空間（例如溫室中心、儲藏室）已改為辦公室或實驗室出租使用', 'border-l-emerald-400')}
             </div>
             <div class="col-span-full">${emTable('面積占比與用電占比', 'fa-solid fa-scale-balanced', 'text-indigo-300',
-                `面積依 ${P.date} 空間清單；用電為各類別房間迴路最近 15 分鐘合計。用電占比明顯高於面積占比的類別，就是節能溝通的優先對象。`,
+                `面積依 ${P.date} 空間清單；用電為各類別房間迴路最近 15 分鐘合計；資策會併入其他廠商。用電占比明顯高於面積占比的類別，就是節能溝通的優先對象。`,
                 ['使用類別', '面積（坪）', '面積占比', '目前 kW', '用電占比', 'W/m²', '本月 kWh/坪'], rows, '')}</div>`;
         }
 
