@@ -86,8 +86,29 @@ def trigger_site_update(wait=180):
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             log(f"site update triggered ({r.status})")
+            return
     except Exception as e:
-        log(f"site update trigger failed: {e}")
+        err = e
+    # 公司網路會攔截 SSL，Python 不認得公司憑證；改用 Windows 自己的 PowerShell 送出。
+    import subprocess
+    import base64
+    ps = ("[Net.ServicePointManager]::SecurityProtocol='Tls12';"
+          "$h=@{Authorization='Bearer '+$env:GH_TOKEN;Accept='application/vnd.github+json';"
+          "'User-Agent'='ctic-circuit-export'};"
+          "$r=Invoke-WebRequest -UseBasicParsing -Method Post -Uri $env:GH_URL -Headers $h "
+          "-Body '{\"ref\":\"main\"}' -ContentType 'application/json';$r.StatusCode")
+    enc = base64.b64encode(ps.encode("utf-16-le")).decode()
+    env = dict(os.environ, GH_TOKEN=token, GH_URL=DISPATCH_URL)
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc],
+                             env=env, capture_output=True, text=True, timeout=60)
+        code = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ""
+        if code == "204":
+            log("site update triggered (204, powershell)")
+        else:
+            log(f"site update trigger failed: python {err}; powershell {code} {out.stderr.strip()[:200]}")
+    except Exception as e2:
+        log(f"site update trigger failed: python {err}; powershell {e2}")
 
 
 def main():
