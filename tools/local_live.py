@@ -243,7 +243,7 @@ FORECAST = {"day": None, "data": None, "at": 0.0}
 
 
 def fetch_forecast():
-    """每 30 分鐘抓一次雲端 live.json 裡的 forecast（逐時預測 kW）。抓不到就沿用舊的，網站其他部分不受影響。"""
+    """每 15 分鐘抓一次雲端 live.json 裡的 forecast（逐時預測 kW）和太陽能 pv。抓不到就沿用舊的，網站其他部分不受影響。"""
     import subprocess
     import urllib.request
     while True:
@@ -262,7 +262,9 @@ def fetch_forecast():
                 log(f"抓不到雲端預測：{type(e).__name__}: {e}")
         if d and d.get("forecast"):
             FORECAST.update(day=(d.get("updated") or "")[:10], data=d["forecast"], at=time.time())
-        time.sleep(1800)
+        if d and d.get("pv"):                      # 太陽能（T-REC 只有雲端有）：一起帶回來
+            FORECAST.update(pv=d["pv"], pv_day=(d["pv"].get("updated") or d.get("updated") or "")[:10])
+        time.sleep(900)
 
 
 # ---------------- 全迴路（本機版總覽與房間資料） ----------------
@@ -355,7 +357,7 @@ class Circuits:
         if self.live and ems_calc.MAIN_KW in self.live[1]:
             data["now_kw"] = round(self.live[1][ems_calc.MAIN_KW], 1)
         data["ac"] = ems_calc.ac_summary(ac_rows, now) if ac_rows else None
-        data["pv"] = None
+        data["pv"] = FORECAST.get("pv") if FORECAST.get("pv_day") == now.date().isoformat() else None
         fcu, fcu_rooms = read_fcu(now)
         data["fcu"] = fcu
         # 房間卡片：kW 用最近 15 分鐘滾動（今天最後一列換成即時讀值，前一列換成約 15 分鐘前的讀值）
