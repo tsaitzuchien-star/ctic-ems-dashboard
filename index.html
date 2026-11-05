@@ -159,7 +159,7 @@
                 const data = await res.json();
                 livePowerData = data.circuits;
                 roomsUpdated = data.updated;
-                if (currentTab !== 'Live') renderCards();
+                renderCards();
             } catch (e) {
                 console.error('房間資料讀取失敗', e);
             }
@@ -320,6 +320,7 @@
                 <div class="flex justify-between text-sm mb-2"><span class="text-slate-300">契約容量使用率（${d.period}）</span><span class="font-mono text-white">${pct.toFixed(0)}%</span></div>
                 <div class="w-full h-3 bg-slate-700 rounded-full overflow-hidden"><div class="${barColor} h-3 rounded-full" style="width:${pct}%"></div></div>
             </div>
+            ${usageSection(d)}
             <div class="col-span-full glass-card p-5">
                 <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-chart-line mr-2 text-blue-400"></i>今日 15 分鐘需量</h3>
                 <p class="text-xs text-slate-400 mb-3">實線：總表實測；虛線：預測系統的逐時預測；紅線：當時段契約上限</p>
@@ -342,6 +343,68 @@
             </div>
             </div>`;
             drawLiveCharts(d);
+        }
+
+        // 四大用途：依房間迴路表（roomData）把各迴路歸到 空調／動力／照明／插座，同一迴路只算一次
+        function usageByCategory() {
+            const out = {};
+            const seen = new Set();
+            roomData.forEach(room => Object.entries(room.circuits).forEach(([cat, cs]) => {
+                if (!cs || cs === '-') return;
+                out[cat] = out[cat] || { kw: 0, today: 0 };
+                cs.split(' / ').forEach(c => {
+                    const key = circuitKey(c);
+                    if (!key || seen.has(key)) return;
+                    seen.add(key);
+                    const v = livePowerData[key];
+                    if (v) { out[cat].kw += v[0] || 0; out[cat].today += v[1] || 0; }
+                });
+            }));
+            return out;
+        }
+
+        function topRooms(type, n = 5) {
+            return roomData.filter(r => r.type === type)
+                .map(r => ({ room: r, t: roomTotals(r) }))
+                .filter(x => x.t)
+                .sort((a, b) => b.t.kw - a.t.kw || b.t.today - a.t.today)
+                .slice(0, n);
+        }
+
+        function rankTable(title, icon, color, rows) {
+            const body = rows.length ? rows.map((x, i) => `
+                <tr class="border-b border-slate-700/50">
+                    <td class="py-2 pr-2 text-slate-500 font-mono">${i + 1}</td>
+                    <td class="py-2 pr-3 font-bold text-white whitespace-nowrap">${x.room.room_id}</td>
+                    <td class="py-2 pr-3 text-slate-300">${x.room.company || '—'}</td>
+                    <td class="py-2 text-right font-mono text-white whitespace-nowrap">${fmt(x.t.kw, 1)} kW</td>
+                    <td class="py-2 pl-3 text-right font-mono text-slate-400 whitespace-nowrap">${fmt(x.t.today, 1)} kWh</td>
+                </tr>`).join('') : '<tr><td class="py-3 text-slate-500">各房間資料載入中...</td></tr>';
+            return `<div class="glass-card p-5">
+                <h3 class="text-lg font-bold text-white mb-3"><i class="${icon} mr-2 ${color}"></i>${title}</h3>
+                <table class="w-full text-sm"><thead><tr class="text-xs text-slate-500 text-left">
+                    <th class="pb-2">#</th><th class="pb-2">空間</th><th class="pb-2">單位</th><th class="pb-2 text-right">目前</th><th class="pb-2 text-right">今日</th>
+                </tr></thead><tbody>${body}</tbody></table></div>`;
+        }
+
+        function usageSection(d) {
+            if (!roomsUpdated) return '';
+            const u = usageByCategory();
+            const plantKw = lastOf(d.feeders)['空調主機房'];
+            const g = k => u[k] || { kw: 0, today: 0 };
+            const plantNote = plantKw !== undefined ? `；另有空調主機房 ${fmt(plantKw)} kW` : '';
+            return `
+            <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                ${tile('<i class="fa-solid fa-snowflake mr-1 text-sky-400"></i>空調總用電', fmt(g('空調').kw, 1), 'kW', `今日 ${fmt(g('空調').today)} kWh${plantNote}`, 'border-l-sky-400')}
+                ${tile('<i class="fa-solid fa-gears mr-1 text-red-400"></i>動力總用電', fmt(g('動力').kw, 1), 'kW', `今日 ${fmt(g('動力').today)} kWh`, 'border-l-red-400')}
+                ${tile('<i class="fa-regular fa-lightbulb mr-1 text-yellow-300"></i>照明總用電', fmt(g('照明').kw, 1), 'kW', `今日 ${fmt(g('照明').today)} kWh`, 'border-l-yellow-300')}
+                ${tile('<i class="fa-solid fa-plug mr-1 text-amber-400"></i>插座總用電', fmt(g('插座').kw, 1), 'kW', `今日 ${fmt(g('插座').today)} kWh`, 'border-l-amber-400')}
+            </div>
+            <p class="col-span-full text-xs text-slate-500 -mt-3">依房間迴路表加總各空間的迴路（最近 15 分鐘平均），同一迴路只算一次；資料時間 ${roomsUpdated}</p>
+            <div class="col-span-full grid grid-cols-1 lg:grid-cols-2 gap-6">
+                ${rankTable('辦公室用電前五名', 'fa-solid fa-briefcase', 'text-emerald-400', topRooms('辦公室'))}
+                ${rankTable('實驗室用電前五名', 'fa-solid fa-flask', 'text-blue-400', topRooms('實驗室'))}
+            </div>`;
         }
 
         function lastOf(series) {
