@@ -1,9 +1,14 @@
-"""中創園區 本機即時能源網站（在監控電腦執行，只在內網看）。
+r"""中創園區 本機即時能源網站（在監控電腦執行，只給監控電腦與空調監控主機看）。
 
 每 5 秒用 DDE 唯讀讀 InTouch 的總電表瞬時 kW（F0_B2P2_MCB_KW_PV），
 每 30 秒讀空調監控主機共用資料夾的 ac_latest.json（冰桶液位、磁浮負載），
 算出台電 15 分鐘需量（本時段平均、推估、今日最高）並與當下時段的契約容量比較，
-用內建網頁伺服器在 http://<監控電腦>:8088/ 顯示，每 5 秒自動更新。
+每 60 秒用 DDE 讀全部 6,618 個迴路度數（circuit_tags.txt），配合 G: 的 Circuit_*.csv 歷史，
+在本機算出跟雲端版一樣的總覽與房間資料（/api/ems/live.json、/api/ems/rooms.json），不連雲端。
+用內建網頁伺服器在 http://<監控電腦>:8088/ 提供完整園區能源網站（與雲端版相同，另多一個
+「即時監控」分頁每 5 秒更新），精簡版即時頁在 /live。
+網站檔案（index.html、data\*.json）放在本程式旁的 site\ 資料夾。
+只放行 ALLOW_IPS 裡的電腦（本機與空調監控主機），其他電腦一律 403。
 
 需要：InTouch WindowViewer 開著、系統管理員權限（與 view.exe 同權限才能 DDE）、pywin32。
 用法：
@@ -19,15 +24,23 @@ import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import ems_calc
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(HERE, "local_live_state.json")
 LOG = os.path.join(HERE, "local_live.log")
 PORT = 8088
 MAIN_TAG = "F0_B2P2_MCB_KW_PV"
 TAIPOWER_OFFSET = 10.0          # 台電電表比 BMS 高約 10 kW（2026-11 對帳確認）
-AC_JSON = r"\\10.10.2.4\AC_Export\ac_latest.json"
+AC_SHARE = r"\\10.10.2.4\AC_Export"
+AC_JSON = os.path.join(AC_SHARE, "ac_latest.json")
 SAMPLE_S = 5
 HISTORY = 2 * 3600 // SAMPLE_S  # 網頁趨勢圖保留 2 小時
+SITE_DIR = os.path.join(HERE, "site")
+CIRCUIT_S = 60                  # 全迴路讀取間隔
+ALLOW_IPS = {"127.0.0.1", "::1", "10.10.2.20", "10.10.2.4"}   # 監控電腦本機、空調監控主機
+AC_TREND_KEYS = ["mag_c1_pct", "mag_c2_pct", "mag_c1_kw", "mag_c2_kw", "ice01_pct", "ice02_pct",
+                 "mag_chws_c", "mag_chwr_c", "flow_m3h"]
 
 
 def log(msg):
@@ -182,23 +195,167 @@ def read_ac():
         return None
 
 
+# ---------------- 全迴路（本機版總覽與房間資料） ----------------
+class Circuits:
+    """15 分鐘整點讀值（G: 的 Circuit_*.csv＋本程式自己每 15 分鐘補的一列）＋最新一次讀值。"""
+
+    def __init__(self):
+        with open(os.path.join(HERE, "circuit_tags.txt"), encoding="utf-8") as f:
+            self.tags = [t.strip() for t in f if t.strip()]
+        try:
+            from circuit_export import find_out_dir
+            self.out_dir = find_out_dir()
+        except BaseException as e:            # find_out_dir 找不到會 SystemExit
+            log(f"找不到 BMS自動匯出 資料夾，只用本程式自己的讀值：{e}")
+            self.out_dir = None
+        self.csv_rows = {}                    # 檔名 -> (mtime, rows)
+        self.own = {}                         # 15 分鐘時段 -> (實際讀取時間, 讀值)（本程式自己讀的）
+        self.month_first = {}                 # "YYYY-MM" -> 本月第一列讀值
+        self.live = None                      # (時間, 讀值)
+        self.recent = deque(maxlen=20)        # 最近 20 次（每分鐘）讀值，算滾動 15 分鐘 kW
+
+    def read(self, conv, now):
+        vals = {}
+        for tag in self.tags:
+            try:
+                vals[tag] = float(conv.Request(tag).strip("\x00 \r\n"))
+            except Exception:
+                pass
+        if len(vals) < len(self.tags) * 0.5:
+            raise RuntimeError(f"全迴路只讀到 {len(vals)}/{len(self.tags)}")
+        self.live = (now, vals)
+        self.recent.append((now, vals))
+        slot = now.replace(minute=now.minute - now.minute % 15, second=0, microsecond=0)
+        if now - slot <= dt.timedelta(minutes=3) and slot not in self.own:
+            self.own[slot] = (now, vals)      # 用實際讀取時間，算 kW 時分鐘數才準
+        for k in [k for k in self.own if k < now - dt.timedelta(days=2)]:
+            del self.own[k]
+
+    def _csv(self, day):
+        if not self.out_dir:
+            return []
+        path = os.path.join(self.out_dir, f"Circuit_{day:%Y-%m-%d}.csv")
+        try:
+            mt = os.path.getmtime(path)
+        except OSError:
+            return []
+        hit = self.csv_rows.get(path)
+        if hit and hit[0] == mt:
+            return hit[1]
+        with open(path, encoding="utf-8-sig") as f:
+            rows = ems_calc.parse_wide(f.read())
+        self.csv_rows = {p: v for p, v in self.csv_rows.items()
+                         if os.path.basename(p) >= f"Circuit_{day - dt.timedelta(days=1):%Y-%m-%d}.csv"}
+        self.csv_rows[path] = (mt, rows)
+        return rows
+
+    def _month_first(self, now):
+        key = f"{now:%Y-%m}"
+        if key in self.month_first:
+            return self.month_first[key]
+        first = None
+        if self.out_dir:
+            names = sorted(n for n in os.listdir(self.out_dir) if n.startswith(f"Circuit_{key}-") and n.endswith(".csv"))
+            for n in names:
+                with open(os.path.join(self.out_dir, n), encoding="utf-8-sig") as f:
+                    head = f.readline() + f.readline()
+                rows = ems_calc.parse_wide(head)
+                if rows:
+                    first = rows[0][1]
+                    break
+        if first is None:
+            return None                       # 下次再找（例如月初 G: 還沒有檔）
+        self.month_first[key] = first
+        return first
+
+    def rows(self, now):
+        """昨天＋今天的 15 分鐘整點讀值，CSV 優先，缺的用本程式自己讀的補。"""
+        merged = dict(self._csv(now.date() - dt.timedelta(days=1)) + self._csv(now.date()))
+        for t, v in self.own.values():
+            near = any(abs((t - c).total_seconds()) <= 180 for c in merged)
+            if t.date() >= now.date() - dt.timedelta(days=1) and not near:
+                merged[t] = v
+        return sorted(merged.items())
+
+    def build(self, now, ac_rows):
+        rows = self.rows(now)
+        data = ems_calc.build(rows, None, now)
+        data["source"] = "local"
+        if self.live and ems_calc.MAIN_KW in self.live[1]:
+            data["now_kw"] = round(self.live[1][ems_calc.MAIN_KW], 1)
+        data["ac"] = ems_calc.ac_summary(ac_rows, now) if ac_rows else None
+        data["pv"] = None
+        # 房間卡片：kW 用最近 15 分鐘滾動（今天最後一列換成即時讀值，前一列換成約 15 分鐘前的讀值）
+        room_rows = rows
+        if self.live:
+            t_live = self.live[0]
+            ago = [r for r in self.recent if dt.timedelta(minutes=10) <= t_live - r[0] <= dt.timedelta(minutes=20)]
+            keep = {t: v for t, v in rows if t < t_live - dt.timedelta(minutes=10)}
+            if ago:
+                keep[ago[-1][0]] = ago[-1][1]
+            keep[t_live] = self.live[1]
+            room_rows = sorted(keep.items())
+        rooms = {"updated": (self.live[0] if self.live else now).strftime("%Y-%m-%d %H:%M"),
+                 "circuits": ems_calc.circuit_stats(room_rows, self._month_first(now))}
+        return data, rooms
+
+
+def read_ac_rows(now):
+    texts = []
+    for d in (now.date() - dt.timedelta(days=1), now.date()):
+        try:
+            with open(os.path.join(AC_SHARE, f"AC_{d:%Y-%m-%d}.csv"), encoding="utf-8-sig") as f:
+                texts.append(f.read())
+        except OSError:
+            pass
+    return ems_calc.parse_ac(texts)
+
+
 # ---------------- 網頁 ----------------
 STATE_LOCK = threading.Lock()
 LIVE = {"ok": False, "error": "啟動中"}
+EMS = {"live": None, "rooms": None}         # 本機算的 live.json、rooms.json（bytes）
+LOCAL_FLAG = b"<script>window.EMS_LOCAL=true</script>"
+
+
+CTYPES = {".html": "text/html; charset=utf-8", ".json": "application/json; charset=utf-8",
+          ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.startswith("/api/live"):
+        ip = self.client_address[0]
+        if ip.startswith("::ffff:"):
+            ip = ip[7:]
+        if ip not in ALLOW_IPS:
+            self.send_error(403, "Only the monitoring PC and AC PC may view this site")
+            return
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/api/live"):
             with STATE_LOCK:
                 body = json.dumps(LIVE, ensure_ascii=False).encode("utf-8")
-            ctype = "application/json; charset=utf-8"
-        elif self.path in ("/", "/index.html"):
+            ctype = CTYPES[".json"]
+        elif path in ("/api/ems/live.json", "/api/ems/rooms.json"):
+            with STATE_LOCK:
+                body = EMS["live" if path.endswith("live.json") else "rooms"]
+            if body is None:
+                self.send_error(503, "Circuit data not ready yet")
+                return
+            ctype = CTYPES[".json"]
+        elif path == "/live" or (path in ("/", "/index.html") and not os.path.exists(os.path.join(SITE_DIR, "index.html"))):
             body = PAGE.encode("utf-8")
-            ctype = "text/html; charset=utf-8"
+            ctype = CTYPES[".html"]
         else:
-            self.send_error(404)
-            return
+            rel = "index.html" if path in ("/", "") else path.lstrip("/")
+            full = os.path.normpath(os.path.join(SITE_DIR, rel))
+            if not full.startswith(os.path.normpath(SITE_DIR) + os.sep) or not os.path.isfile(full):
+                self.send_error(404)
+                return
+            with open(full, "rb") as f:
+                body = f.read()
+            if full.endswith(os.sep + "index.html") and os.path.dirname(full) == os.path.normpath(SITE_DIR):
+                body = body.replace(b"</head>", LOCAL_FLAG + b"</head>", 1)
+            ctype = CTYPES.get(os.path.splitext(full)[1].lower(), "application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")
@@ -288,12 +445,25 @@ def main():
         print(f"總電表 BMS {kw:.1f} kW（台電基準 {kw + TAIPOWER_OFFSET:.1f}）")
         print(f"時段 {contract_limit(now)}")
         print(f"空調：{json.dumps(ac, ensure_ascii=False)[:300] if ac else '讀不到 ' + AC_JSON}")
+        circ = Circuits()
+        t0 = time.time()
+        circ.read(reader.conv, now)
+        print(f"全迴路讀到 {len(circ.live[1])}/{len(circ.tags)} 個，耗時 {time.time() - t0:.1f} 秒；"
+              f"歷史資料夾 {circ.out_dir}")
+        t0 = time.time()
+        data, rooms = circ.build(now, read_ac_rows(now))
+        print(f"本機計算 {time.time() - t0:.1f} 秒：15 分鐘區間 {len(data['times'])} 個，最近 {data['last15_kw']} kW，"
+              f"今日最高 {data['today_peak_kw']} kW @ {data['today_peak_at']}，迴路 {len(rooms['circuits'])} 個，"
+              f"空調 {'有' if data['ac'] else '無'}")
+        print(f"網站檔案：{'有' if os.path.exists(os.path.join(SITE_DIR, 'index.html')) else '沒有'} {SITE_DIR}\\index.html")
         return
 
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     log(f"本機即時網站啟動：http://localhost:{PORT}/")
     ac, ac_at = None, 0.0
+    circ, circ_at = Circuits(), 0.0
+    ac_trend = deque(maxlen=240)          # 每分鐘一點，保留 4 小時
     while True:
         t0 = time.time()
         now = dt.datetime.now()
@@ -302,11 +472,24 @@ def main():
             dem.add(now, kw)
             if t0 - ac_at > 30:
                 ac, ac_at = read_ac(), t0
+                if ac and ac.get("viewer_ok") and (not ac_trend or ac_trend[-1][0] != ac.get("time", "")[11:16]):
+                    ac_trend.append([ac.get("time", "")[11:16]] + [ac.get(k) for k in AC_TREND_KEYS])
+            if t0 - circ_at >= CIRCUIT_S:
+                circ_at = t0
+                try:
+                    circ.read(reader.conv, now)
+                    data, rooms = circ.build(now, read_ac_rows(now))
+                    with STATE_LOCK:
+                        EMS["live"] = json.dumps(data, ensure_ascii=False).encode("utf-8")
+                        EMS["rooms"] = json.dumps(rooms, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                except Exception as e:
+                    log(f"全迴路計算失敗：{type(e).__name__}: {e}")
             snap = dem.snapshot(now)
             with STATE_LOCK:
                 LIVE.clear()
                 LIVE.update({"ok": True, "time": now.strftime("%H:%M:%S"), "offset": TAIPOWER_OFFSET,
-                             "demand": snap, "trend": list(dem.trend), "ac": ac})
+                             "demand": snap, "trend": list(dem.trend), "ac": ac,
+                             "ac_trend_keys": AC_TREND_KEYS, "ac_trend": list(ac_trend)})
         except Exception as e:
             with STATE_LOCK:
                 LIVE.clear()
