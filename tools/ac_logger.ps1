@@ -75,7 +75,7 @@ $inv = [Globalization.CultureInfo]::InvariantCulture
 function Read-Once {
   $now = Get-Date
   $v = [CticDde]::Read($tags)
-  $ok = [int]($v -ne $null)
+  $ok = [int]($null -ne $v)
   $vals = foreach ($i in 0..($tags.Count-1)) {
     if (-not $ok) { '' } else {
       $d = 0.0
