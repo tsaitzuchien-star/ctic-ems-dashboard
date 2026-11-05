@@ -1,12 +1,14 @@
 ﻿# 中創園區 空調監控主機 唯讀記錄程式 (ac_logger.ps1)
 # 每 60 秒用 DDE 向本機 InTouch WindowViewer 讀取冰桶/磁浮/BCU 點位，只讀不寫。
 # 輸出：C:\BMS_Export\AC_yyyy-MM-dd.csv (每分鐘一列) 與 C:\BMS_Export\ac_latest.json
-param([switch]$Once)
+# 另外每 5 分鐘讀 fcu_tags.txt 列出的外氣溫溼度與全部小型送風機（運轉、室溫、設定溫度、冷水閥），
+# 輸出 C:\BMS_Export\FCU_yyyy-MM-dd.csv（每 5 分鐘一列）。
+param([switch]$Once, [switch]$Fcu)
 $ErrorActionPreference = 'Stop'
 $Out = 'C:\BMS_Export'
 New-Item -ItemType Directory -Force $Out | Out-Null
 $mtx = New-Object System.Threading.Mutex($false, 'Global\CTIC_AC_Logger')
-if (-not $Once -and -not $mtx.WaitOne(0)) { exit 0 }   # 已有一份在跑
+if (-not $Once -and -not $Fcu -and -not $mtx.WaitOne(0)) { exit 0 }   # 已有一份在跑
 
 $src = @"
 using System; using System.Runtime.InteropServices; using System.Text;
@@ -94,9 +96,35 @@ function Read-Once {
   return "$ts viewer_ok=$ok"
 }
 
+$FcuList = Join-Path $Out 'fcu_tags.txt'
+function Read-Fcu {
+  if (-not (Test-Path $FcuList)) { return 'no fcu_tags.txt' }
+  $ft = [string[]]@(Get-Content $FcuList | Where-Object { $_.Trim() } | ForEach-Object { $_.Trim() })
+  $now = Get-Date
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  $v = [CticDde]::Read($ft)
+  $ok = [int]($null -ne $v)
+  $vals = foreach ($i in 0..($ft.Count-1)) {
+    if (-not $ok) { '' } else {
+      $d = 0.0
+      if ([double]::TryParse($v[$i], [Globalization.NumberStyles]::Float, $inv, [ref]$d)) { [math]::Round($d,2).ToString($inv) } else { '' }
+    }
+  }
+  $ts = $now.ToString('yyyy-MM-dd HH:mm:ss')
+  $f = Join-Path $Out ('FCU_' + $now.ToString('yyyy-MM-dd') + '.csv')
+  if (-not (Test-Path $f)) { (@('time','viewer_ok') + $ft) -join ',' | Out-File $f -Encoding ascii }
+  ((@($ts,$ok) + $vals) -join ',') | Out-File $f -Append -Encoding ascii
+  $n = @($vals | Where-Object { $_ -ne '' }).Count
+  return "$ts viewer_ok=$ok read $n/$($ft.Count) in $([math]::Round($sw.Elapsed.TotalSeconds,1)) s"
+}
+
 if ($Once) { Read-Once; exit 0 }
+if ($Fcu) { Read-Fcu; exit 0 }
 while ($true) {
   try { Read-Once | Out-Null } catch { "$(Get-Date -f s) $($_.Exception.Message)" | Out-File (Join-Path $Out 'ac_logger.log') -Append -Encoding utf8 }
+  if ((Get-Date).Minute % 5 -eq 0) {
+    try { Read-Fcu | Out-Null } catch { "$(Get-Date -f s) FCU $($_.Exception.Message)" | Out-File (Join-Path $Out 'ac_logger.log') -Append -Encoding utf8 }
+  }
   $s = 60 - (Get-Date).Second; if ($s -le 0) { $s = 60 }
   Start-Sleep -Seconds $s
 }

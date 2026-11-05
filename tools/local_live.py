@@ -285,6 +285,8 @@ class Circuits:
             data["now_kw"] = round(self.live[1][ems_calc.MAIN_KW], 1)
         data["ac"] = ems_calc.ac_summary(ac_rows, now) if ac_rows else None
         data["pv"] = None
+        fcu, fcu_rooms = read_fcu(now)
+        data["fcu"] = fcu
         # 房間卡片：kW 用最近 15 分鐘滾動（今天最後一列換成即時讀值，前一列換成約 15 分鐘前的讀值）
         room_rows = rows
         if self.live:
@@ -295,7 +297,7 @@ class Circuits:
                 keep[ago[-1][0]] = ago[-1][1]
             keep[t_live] = self.live[1]
             room_rows = sorted(keep.items())
-        rooms = {"updated": (self.live[0] if self.live else now).strftime("%Y-%m-%d %H:%M"),
+        rooms = {"updated": (self.live[0] if self.live else now).strftime("%Y-%m-%d %H:%M"), "fcu": fcu_rooms,
                  "circuits": ems_calc.circuit_stats(room_rows, self._month_first(now))}
         return data, rooms
 
@@ -309,6 +311,37 @@ def read_ac_rows(now):
         except OSError:
             pass
     return ems_calc.parse_ac(texts)
+
+
+FCU_MAP = None
+FCU_CACHE = {}                           # 檔名 -> (mtime, rows)
+
+
+def read_fcu(now):
+    """空調監控主機每 5 分鐘的外氣溫溼度與小型送風機（FCU_*.csv）→ (總覽, 各房間)。"""
+    global FCU_MAP
+    try:
+        if FCU_MAP is None:
+            FCU_MAP = ems_calc.load_fcu_map(os.path.join(HERE, "fcu_map.json"))
+        rows = []
+        for d in (now.date() - dt.timedelta(days=1), now.date()):
+            path = os.path.join(AC_SHARE, f"FCU_{d:%Y-%m-%d}.csv")
+            try:
+                mt = os.path.getmtime(path)
+            except OSError:
+                continue
+            hit = FCU_CACHE.get(path)
+            if not hit or hit[0] != mt:
+                with open(path, encoding="utf-8-sig") as f:
+                    hit = (mt, ems_calc.parse_fcu([f.read()]))
+                FCU_CACHE[path] = hit
+            rows += hit[1]
+        for p in [p for p in FCU_CACHE if os.path.basename(p) < f"FCU_{now.date() - dt.timedelta(days=1):%Y-%m-%d}.csv"]:
+            del FCU_CACHE[p]
+        return ems_calc.fcu_summary(rows, FCU_MAP, now)
+    except Exception as e:
+        log(f"送風機資料讀取失敗：{type(e).__name__}: {e}")
+        return None, {}
 
 
 # ---------------- 網頁 ----------------
