@@ -82,14 +82,15 @@ function Read-Mag {
 function Read-Demand {
   try { $d = Invoke-RestMethod -Uri $Api -TimeoutSec 5 } catch { return $null }
   if (-not $d.ok) { return $null }
-  $t = [datetime]::ParseExact("$((Get-Date).ToString('yyyy-MM-dd')) $($d.time)", 'yyyy-MM-dd HH:mm:ss', $inv)
-  $age = ((Get-Date) - $t).TotalSeconds
-  if ($age -lt -43200) { $age += 86400 }
+  # 兩台電腦時鐘不一定一致：用「資料時間上次改變」到現在的秒數判斷是否失聯
+  if ($d.time -ne $script:lastApiTime) { $script:lastApiTime = $d.time; $script:lastApiSeen = Get-Date }
+  $age = ((Get-Date) - $script:lastApiSeen).TotalSeconds
   [pscustomobject]@{ age = $age; proj = [double]$d.demand.projected; limit = [double]$d.demand.limit
                      now = [double]$d.demand.now_kw; elapsed = [int]$d.demand.elapsed_s; period = $d.demand.period }
 }
 
 # ---- 狀態 ----
+$lastApiTime = $null; $lastApiSeen = Get-Date
 $base = $null          # 人員設定值（降載前的值）
 $sim  = $null          # 試跑時的「假想」現值
 $lastWrite = $null; $lastStep = [datetime]::MinValue
