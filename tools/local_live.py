@@ -225,7 +225,7 @@ main{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,mi
 .row{display:flex;justify-content:space-between;gap:12px;padding:4px 0;font-size:15px}.row span{white-space:nowrap}.row b{text-align:right}.row b{font-variant-numeric:tabular-nums}
 canvas{width:100%;height:240px;display:block}
 .ok{border-left-color:var(--ok)}.warn{border-left-color:var(--warn)}.bad{border-left-color:var(--bad)}
-.err{color:var(--bad)}
+.err{color:var(--bad)}@media(min-width:700px){#cAc{grid-column:span 2}}
 </style></head><body>
 <header><h1>中創園區 即時用電</h1><span class="m" id="upd">連線中…</span></header>
 <main>
