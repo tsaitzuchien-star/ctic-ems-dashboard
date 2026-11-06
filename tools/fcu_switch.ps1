@@ -73,8 +73,9 @@ function Snap {
   $rows = @()
   for ($i = 0; $i -lt $all.Count; $i++) {
     $h = [ordered]@{ time = (Get-Date -f 'HH:mm:ss'); fcu = ($all[$i] -replace '^.*_','') }
-    for ($j = 0; $j -lt $fields.Count; $j++) { $h[$fields[$j]] = $v[$i * $fields.Count + $j] }
-    $h['GroupPower'] = $v[$tags.Count - 1]
+    for ($j = 0; $j -lt $fields.Count; $j++) { $x = $v[$i * $fields.Count + $j]; $d = 0.0
+      $h[($fields[$j] -replace 'Fan_','' -replace 'SpeedSetting','Speed' -replace 'CV_State','CV')] = $(if ([double]::TryParse("$x", [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$d)) { [math]::Round($d, 1) } else { $x }) }
+    $h['Grp'] = $v[$tags.Count - 1]
     $rows += [pscustomobject]$h
   }
   return $rows
@@ -87,9 +88,9 @@ if ($SetT -ge 0) {
   $val = $SetT.ToString([Globalization.CultureInfo]::InvariantCulture); $pt = 'setT'
 } else { $val = $(if ($Off) { '0' } else { '1' }); $pt = 'Run' }
 $res = @(foreach ($u in $all) { "$($u)_$pt=" + [CticDdeW]::Poke("$($u)_$pt", $val) })
-$line = "$(Get-Date -f s) $Panel $pt=$val poke: $($res -join ' ') before: $(($b | ForEach-Object { "$($_.fcu) Run=$($_.Run) H/M/L=$($_.Fan_High)/$($_.Fan_Middle)/$($_.Fan_Low) setT=$($_.setT)" }) -join '; ')"
+$line = "$(Get-Date -f s) $Panel $pt=$val poke: $($res -join ' ') before: $(($b | ForEach-Object { "$($_.fcu) Run=$($_.Run) H/M/L=$($_.High)/$($_.Middle)/$($_.Low) setT=$($_.setT)" }) -join '; ')"
 $line | Out-File $Log -Append -Encoding utf8
 Write-Host $line
 for ($t = 0; $t -lt $Watch; $t += 5) { Start-Sleep -Seconds 5; Snap | Format-Table -HideTableHeaders -AutoSize | Out-String -Width 200 | Write-Host }
 $a = Snap
-"$(Get-Date -f s) $Panel after: $(($a | ForEach-Object { "$($_.fcu) Run=$($_.Run) H/M/L=$($_.Fan_High)/$($_.Fan_Middle)/$($_.Fan_Low) setT=$($_.setT)" }) -join '; ')" | Out-File $Log -Append -Encoding utf8
+"$(Get-Date -f s) $Panel after: $(($a | ForEach-Object { "$($_.fcu) Run=$($_.Run) H/M/L=$($_.High)/$($_.Middle)/$($_.Low) setT=$($_.setT)" }) -join '; ')" | Out-File $Log -Append -Encoding utf8
