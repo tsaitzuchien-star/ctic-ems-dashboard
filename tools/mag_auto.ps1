@@ -46,7 +46,7 @@ $MANUAL_HOLD_S = 3600
 $ECO_UNTIL = [datetime]'2026-12-01'; $EcoOff = Join-Path $Out 'mag_eco_off.txt'
 $ECO_BASE = 65; $ECO_STEP = 10; $ECO_STEP_S = 600
 $ECO_HOT_UP = 0.25; $ECO_HOT_DN = 0.15; $ECO_4F_UP = 0.40; $ECO_4F_OK = 0.30   # 上限：非 4 樓最熱樓層 ≥ 25%（或 4 樓 ≥ 40%）就加；< 15%（4 樓 < 30%）才減
-$AFTER_START = '18:00'; $AFTER_LIMIT = 40   # 園區供應 07:30–18:00，之後是申請付費的加班空調，上限固定 40%（Cliff 2026-11-06）
+$AFTER_START = '18:00'; $AFTER_LIMIT = 30   # 園區供應 07:30–18:00，之後是申請付費的加班空調，上限固定 30%（Cliff 2026-11-06 16:51，原 40%）
 $ECO_SP_DN = 0.30; $ECO_4F_SP_DN = 0.45                                         # 出水：熱房間 ≥ 30%（4 樓 ≥ 45%）才降
 
 $mtx = New-Object System.Threading.Mutex($false, 'Global\CTIC_Mag_Auto')
@@ -248,7 +248,8 @@ function Eco-Floor($t) {
   if ($h -lt '11:00') { return 65 }
   if ($h -lt '14:00') { if ($v2) { return 70 } else { return 80 } }    # 餐廳營業、外氣最熱
   if ($h -lt '16:00') { return 60 }
-  return 50                            # 16:00–18:00；18:00 後另有固定 40%
+  if ($h -lt '17:00') { return 40 }    # 16:00–17:00（Cliff 2026-11-06 17:06）
+  return 30                            # 17:00–18:00；18:00 後另有固定 30%
 }
 function Sp-Band($t) {   # 出水設定季節上下限
   if (Is-Eco $t) { if ($t.ToString('HH:mm') -lt '09:30') { return @(12.0, 13.0) } else { return @(13.0, 14.0) } }   # 早上出水冷一點除濕；白天上限 14（15:13 Cliff）

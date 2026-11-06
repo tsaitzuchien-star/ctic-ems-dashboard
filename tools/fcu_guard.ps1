@@ -14,6 +14,8 @@ $Out = 'C:\BMS_Export'
 $SET_MIN = 24.0   # Cliff 2026-11-06 15:08：老闆說 25 度有點悶，下限改 24
 $AFTER_START = '18:00'; $AFTER_END = '07:00'
 $MAX_WRITES = 150
+# 下班第二次開機（Cliff 2026-11-06 16:51）：關過又被打開 → 不再關，默默把設定調到 28°C；隔天 07:00 後調回 25°C
+$WARM_SET = 28.0; $RESTORE_SET = 25.0; $RESTORE_FROM = '07:00'; $RESTORE_UNTIL = '18:00'
 $mode = $(if ($Live) { 'LIVE' } else { 'DRY' })
 $now = Get-Date
 $mtx = New-Object System.Threading.Mutex($false, 'Global\CTIC_Fcu_Guard')
@@ -109,7 +111,7 @@ function Event-Now($t) {
   }
   [pscustomobject]@{ panels = @($pan | Select-Object -Unique); text = ($txt -join '；') }
 }
-$status = [ordered]@{ time = $now.ToString('yyyy-MM-dd HH:mm:ss'); mode = $mode; event = ''; units = 0; running = 0; setT_fix = 0; after_off = 0; after_rule = ''; note = ''; actions = @() }
+$status = [ordered]@{ time = $now.ToString('yyyy-MM-dd HH:mm:ss'); mode = $mode; event = ''; units = 0; running = 0; setT_fix = 0; after_off = 0; warm28 = 0; restored = 0; after_rule = ''; note = ''; actions = @() }
 function Save-Status { $status | ConvertTo-Json -Depth 4 | Out-File (Join-Path $Out 'fcu_guard_status.json') -Encoding utf8 }
 if (Test-Path (Join-Path $Out 'fcu_guard_off.txt')) { $status.note = 'off-switch'; Save-Status; exit 0 }
 
@@ -166,6 +168,19 @@ function Allowed($u) {
   return $false
 }
 
+# 今晚關過／調高過的送風機（以「晚上」為單位，跨午夜算同一晚）
+$stf = Join-Path $Out 'fcu_guard_state.json'
+$night = $(if ($hm -lt $AFTER_END) { $now.AddDays(-1) } else { $now }).ToString('yyyy-MM-dd')
+$state = $null; if (Test-Path $stf) { try { $state = Get-Content $stf -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $state = $null } }
+$offSet = @{}; $raised = @{}
+if ($state) {
+  foreach ($x in @($state.off)) { if ($x) { $offSet[$x] = 1 } }
+  if ($state.raised) { foreach ($pr in $state.raised.PSObject.Properties) { $raised[$pr.Name] = $pr.Value } }
+}
+$stNight = $(if ($state) { "$($state.night)" } else { '' })
+if ($stNight -ne $night) { $offSet = @{} }   # 新的一晚：關機名單重來（調高名單留到白天還原）
+function Save-State { if ($Live) { [ordered]@{ night = $night; off = @($offSet.Keys); raised = $raised } | ConvertTo-Json -Depth 3 | Out-File $stf -Encoding utf8 } }
+
 $logf = Join-Path $Out ('fcu_guard_{0:yyyy-MM-dd}.csv' -f $now)
 if (-not (Test-Path $logf)) { 'time,mode,unit,rooms,action,before,ok' | Out-File $logf -Encoding utf8 }
 $writes = 0; $acts = @()
@@ -174,17 +189,38 @@ for ($i = 0; $i -lt $units.Count; $i++) {
   if ($null -eq $run -or $run -lt 0.5) { continue }
   $status.running++
   $act = $null; $tag = $null; $val = $null; $before = $null
-  if ($after -and -not (Allowed $u)) { $act = 'off'; $tag = "$($u)_Run"; $val = '0'; $before = "Run=1 setT=$st" }
+  if ($after -and -not (Allowed $u)) {
+    if ($offSet.ContainsKey($u) -or $raised.ContainsKey($u)) {
+      # 關過又被打開：不再關，設定調到 28°C（已經 ≥ 28 就不動）
+      if ($null -ne $st -and $st -gt 5 -and $st -lt $WARM_SET - 0.05) {
+        $act = 'warm28'; $tag = "$($u)_setT"; $val = $WARM_SET.ToString($inv); $before = "setT=$st"
+        if (-not $raised.ContainsKey($u)) { $raised[$u] = $st }
+      }
+    } else { $act = 'off'; $tag = "$($u)_Run"; $val = '0'; $before = "Run=1 setT=$st"; $offSet[$u] = 1 }
+  }
   elseif (-not $NoSetT -and $null -ne $st -and $st -gt 5 -and $st -lt ($mn = $(if (Is-Guard $u) { $GUARD_SET_MIN } elseif (In-Zone $u) { $ZONE_SET_MIN } else { $SET_MIN })) - 0.05) { $act = 'setT_floor'; $tag = "$($u)_setT"; $val = $mn.ToString($inv); $before = "setT=$st" }
   if (-not $act) { continue }
   if ($writes -ge $MAX_WRITES) { $status.note = "max-writes $MAX_WRITES"; break }
   $ok = ''
   if ($Live) { $ok = [CticDdeW]::Poke($tag, $val); $writes++; Start-Sleep -Milliseconds 300 }
-  if ($act -eq 'off') { $status.after_off++ } else { $status.setT_fix++ }
+  if ($act -eq 'off') { $status.after_off++ } elseif ($act -eq 'warm28') { $status.warm28++ } else { $status.setT_fix++ }
   $rm = Rooms $u
   "$($now.ToString('yyyy-MM-dd HH:mm:ss')),$mode,$u,$rm,$act,$before,$ok" | Out-File $logf -Append -Encoding utf8
   $acts += "$u [$rm] $act ($before)"
 }
+# 白天（07:00–18:00）把昨晚調到 28°C 的送風機調回 25°C（不管有沒有開機）
+if ($raised.Count -and $hm -ge $RESTORE_FROM -and $hm -lt $RESTORE_UNTIL) {
+  foreach ($u in @($raised.Keys)) {
+    if ($writes -ge $MAX_WRITES) { $status.note = "max-writes $MAX_WRITES"; break }
+    $ok = ''
+    if ($Live) { $ok = [CticDdeW]::Poke("$($u)_setT", $RESTORE_SET.ToString($inv)); $writes++; Start-Sleep -Milliseconds 300 }
+    $rm = Rooms $u
+    "$($now.ToString('yyyy-MM-dd HH:mm:ss')),$mode,$u,$rm,restore25,setT=28 (was $($raised[$u])),$ok" | Out-File $logf -Append -Encoding utf8
+    $acts += "$u [$rm] restore25"; $status.restored++
+    if ($ok -ne $false) { $raised.Remove($u) }
+  }
+}
+Save-State
 $status.actions = $acts
 Save-Status
 Write-Host "fcu_guard $mode $($status.time): units=$($status.units) running=$($status.running) setT_fix=$($status.setT_fix) after_off=$($status.after_off) $($status.after_rule) $($status.note)"
