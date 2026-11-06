@@ -647,7 +647,7 @@
                     ${row('照目前用量推估本月', `<span class="${ok ? 'text-emerald-400' : 'text-red-400'}">${fmt(t.proj_meter, 0)} kWh</span>`)}
                     ${t.per_cap_prev ? row(`人均用電（去年 ${t.people_prev} 人→今年平均 ${fmt(t.people_avg, 0)} 人）`, `${fmt(t.per_cap_prev, 0)} → <span class="text-emerald-400">${fmt(t.per_cap_proj, 0)}</span> 度/人（${t.per_cap_pct > 0 ? '+' : ''}${fmt(t.per_cap_pct, 1)}%）`) : ''}
                     ${row('平日平均／假日平均', `${fmt(t.avg_weekday, 0)}／${fmt(t.avg_weekend, 0)} kWh`)}
-                    ${row(`剩下 ${t.rem_weekdays + t.rem_weekends} 天每天需壓在`, t.need_per_day == null ? '—' : `<span class="${t.need_per_day < (t.avg_weekday || 0) * 0.85 ? 'text-red-400' : 'text-white'}">${fmt(t.need_per_day, 0)} kWh</span>`)}`);
+                    ${row(`${+t.month.slice(5)} 月剩下 ${t.rem_weekdays + t.rem_weekends} 天（計入 ${+t.month.slice(5) % 12 + 1} 月帳單）每天需壓在`, t.need_per_day == null ? '—' : `<span class="${t.need_per_day < (t.avg_weekday || 0) * 0.85 ? 'text-red-400' : 'text-white'}">${fmt(t.need_per_day, 0)} kWh</span>`)}`);
                 rtSet('rt-tgt-note', `去年 FY114 全年 ${fmt(t.fy_prev_total, 0)} 度，${t.target_pct}% 後今年上限 ${fmt(t.fy_prev_total * (1 + t.target_pct / 100), 0)} 度。1–11 月帳單已用 ${fmt(t.bill_ytd, 0)} 度，12 月帳單（約 11 月用電）需 ≤ ${fmt(t.cap_bill, 0)} 度；去年同月 ${fmt(t.bill_last_year, 0)} 度。電表換算帳單 ×1.0203。`);
             }
         }
