@@ -248,7 +248,8 @@ function Eco-Floor($t) {
   if ($h -lt '11:00') { return 65 }
   if ($h -lt '14:00') { if ($v2) { return 70 } else { return 80 } }    # 餐廳營業、外氣最熱
   if ($h -lt '16:00') { return 60 }
-  return 50                            # 16:00–18:00；18:00 後另有固定 40%
+  if ($h -lt '17:00') { return 50 }    # 16:00–17:00
+  return 40                            # 17:00–18:00（Cliff 2026-11-06 17:05）；18:00 後另有固定 30%
 }
 function Sp-Band($t) {   # 出水設定季節上下限
   if (Is-Eco $t) { if ($t.ToString('HH:mm') -lt '09:30') { return @(12.0, 13.0) } else { return @(13.0, 14.0) } }   # 早上出水冷一點除濕；白天上限 14（15:13 Cliff）
