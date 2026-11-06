@@ -75,7 +75,41 @@ $inv = [Globalization.CultureInfo]::InvariantCulture
 function Num($s) { $d = 0.0; if ([double]::TryParse("$s", [Globalization.NumberStyles]::Float, $inv, [ref]$d)) { $d } else { $null } }
 function Lines($f) { if (Test-Path $f) { @(Get-Content $f -Encoding UTF8 | ForEach-Object { ($_ -replace '#.*$','').Trim() } | Where-Object { $_ }) } else { $null } }
 
-$status = [ordered]@{ time = $now.ToString('yyyy-MM-dd HH:mm:ss'); mode = $mode; units = 0; running = 0; setT_fix = 0; after_off = 0; after_rule = ''; note = ''; actions = @() }
+# 場地租借區（Cliff 2026-11-06 16:21）：挑高又熱，設定下限 20°C；ac_events.txt 有登記的時段照常供冷、下班不關
+$ZONES = [ordered]@{
+  '會議廳' = @('SG_1F31_P20')                                                   # C104 國際會議廳（SP-21-3 L3、L4）
+  '展演'   = @('SG_1F31_P18', 'SG_1F31_P19', 'SG_1F31_P25', 'SG_1F31_P26')       # 展演大廳（SP-21-2 L13、SP-21-3 L05–L08）
+  '訓練'   = @('SG_1F31_P15', 'SG_1F31_P14', 'SG_1F31_P17', 'SG_1F31_P16')       # 訓練教室 B131–B134（SP-21-3 L10–L13）
+}
+$ZONE_ALIAS = @{ 'hall' = '會議廳'; 'expo' = '展演'; 'train' = '訓練'; 'all' = '全部' }   # 英文代號，方便在 PowerShell 打字
+$ZONE_SET_MIN = 20.0; $EVENT_PRECOOL_MIN = 30
+# 警衛室（1 樓收發室一帶 1-P21，SP-21-1 L7/L8）：24 小時有人值勤，下限 22°C、下班不關（Cliff 2026-11-06 16:24）
+$GUARD = @('SG_1F31_P21'); $GUARD_SET_MIN = 22.0
+function Is-Guard($u) { foreach ($p in $GUARD) { if ($u.StartsWith($p)) { return $true } }; return $false }
+$EventFile = Join-Path $Out 'ac_events.txt'   # 一行一場：2026-11-07 07:30-17:30 會議廳 展演 訓練（也可寫 全部，或面板編號）
+function Zone-Panels { @($ZONES.Values | ForEach-Object { $_ }) }
+function In-Zone($u) { foreach ($p in (Zone-Panels)) { if ($u.StartsWith($p)) { return $true } }; return $false }
+function Event-Now($t) {
+  # 回傳現在（含開始前 30 分鐘預冷）有活動的面板與說明
+  $pan = @(); $txt = @()
+  if (Test-Path $EventFile) {
+    foreach ($line in (Get-Content $EventFile -Encoding UTF8)) {
+      $l = ($line -replace '#.*$', '').Trim(); if (-not $l) { continue }
+      $p = @($l -split '\s+')
+      if ($p.Count -lt 3 -or $p[1] -notmatch '^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$') { continue }
+      try { $d0 = [datetime]::ParseExact($p[0], 'yyyy-MM-dd', $null) } catch { continue }
+      $s = $d0.Add([timespan]::Parse($matches[1])).AddMinutes(-$EVENT_PRECOOL_MIN); $e = $d0.Add([timespan]::Parse($matches[2]))
+      if ($t -lt $s -or $t -ge $e) { continue }
+      foreach ($z in $p[2..($p.Count - 1)]) {
+        $z = $(if ($ZONE_ALIAS.Contains($z.ToLower())) { $ZONE_ALIAS[$z.ToLower()] } else { $z })
+        if ($z -eq '全部') { $pan += Zone-Panels } elseif ($ZONES.Contains($z)) { $pan += $ZONES[$z] } elseif ($z -match '^SG_') { $pan += $z }
+      }
+      $txt += "$($p[1]) $($p[2..($p.Count - 1)] -join ' ')"
+    }
+  }
+  [pscustomobject]@{ panels = @($pan | Select-Object -Unique); text = ($txt -join '；') }
+}
+$status = [ordered]@{ time = $now.ToString('yyyy-MM-dd HH:mm:ss'); mode = $mode; event = ''; units = 0; running = 0; setT_fix = 0; after_off = 0; after_rule = ''; note = ''; actions = @() }
 function Save-Status { $status | ConvertTo-Json -Depth 4 | Out-File (Join-Path $Out 'fcu_guard_status.json') -Encoding utf8 }
 if (Test-Path (Join-Path $Out 'fcu_guard_off.txt')) { $status.note = 'off-switch'; Save-Status; exit 0 }
 
@@ -118,7 +152,10 @@ if ($after) {
   if ($null -eq $allow) { $allow = Lines $f2; $af = $f2 }
   if ($null -eq $allow) { $after = $false; $status.after_rule = 'no-allow-list' } else { $status.after_rule = "$(Split-Path $af -Leaf): $($allow -join ' ')" }
 }
+$ev = Event-Now $now; $status.event = $ev.text
 function Allowed($u) {
+  if (Is-Guard $u) { return $true }   # 警衛室 24 小時
+  foreach ($p in $ev.panels) { if ($u.StartsWith($p)) { return $true } }   # 場地租借時段照常供冷
   # 名單每行：房號或面板，後面可加結束時間，例如「C303 19:00」= 申請到 19:00，之後照樣關
   $rooms = @((Rooms $u) -split ' ' | Where-Object { $_ })
   foreach ($line in $allow) {
@@ -138,7 +175,7 @@ for ($i = 0; $i -lt $units.Count; $i++) {
   $status.running++
   $act = $null; $tag = $null; $val = $null; $before = $null
   if ($after -and -not (Allowed $u)) { $act = 'off'; $tag = "$($u)_Run"; $val = '0'; $before = "Run=1 setT=$st" }
-  elseif (-not $NoSetT -and $null -ne $st -and $st -gt 5 -and $st -lt $SET_MIN - 0.05) { $act = 'setT_floor'; $tag = "$($u)_setT"; $val = $SET_MIN.ToString($inv); $before = "setT=$st" }
+  elseif (-not $NoSetT -and $null -ne $st -and $st -gt 5 -and $st -lt ($mn = $(if (Is-Guard $u) { $GUARD_SET_MIN } elseif (In-Zone $u) { $ZONE_SET_MIN } else { $SET_MIN })) - 0.05) { $act = 'setT_floor'; $tag = "$($u)_setT"; $val = $mn.ToString($inv); $before = "setT=$st" }
   if (-not $act) { continue }
   if ($writes -ge $MAX_WRITES) { $status.note = "max-writes $MAX_WRITES"; break }
   $ok = ''

@@ -125,6 +125,39 @@ function Read-Mag {
 
 # 小型送風機：有開的台數、比設定熱 1°C 以上的比例、平均 (室溫-設定)
 $fcuTags = $null
+# 場地租借區（Cliff 2026-11-06 16:21）：挑高又熱，設定下限 20°C；ac_events.txt 有登記的時段照常供冷、下班不關
+$ZONES = [ordered]@{
+  '會議廳' = @('SG_1F31_P20')                                                   # C104 國際會議廳（SP-21-3 L3、L4）
+  '展演'   = @('SG_1F31_P18', 'SG_1F31_P19', 'SG_1F31_P25', 'SG_1F31_P26')       # 展演大廳（SP-21-2 L13、SP-21-3 L05–L08）
+  '訓練'   = @('SG_1F31_P15', 'SG_1F31_P14', 'SG_1F31_P17', 'SG_1F31_P16')       # 訓練教室 B131–B134（SP-21-3 L10–L13）
+}
+$ZONE_ALIAS = @{ 'hall' = '會議廳'; 'expo' = '展演'; 'train' = '訓練'; 'all' = '全部' }   # 英文代號，方便在 PowerShell 打字
+$ZONE_SET_MIN = 20.0; $EVENT_PRECOOL_MIN = 30
+$EventFile = Join-Path $Out 'ac_events.txt'   # 一行一場：2026-11-07 07:30-17:30 會議廳 展演 訓練（也可寫 全部，或面板編號）
+function Zone-Panels { @($ZONES.Values | ForEach-Object { $_ }) }
+function In-Zone($u) { foreach ($p in (Zone-Panels)) { if ($u.StartsWith($p)) { return $true } }; return $false }
+function Event-Now($t) {
+  # 回傳現在（含開始前 30 分鐘預冷）有活動的面板與說明
+  $pan = @(); $txt = @()
+  if (Test-Path $EventFile) {
+    foreach ($line in (Get-Content $EventFile -Encoding UTF8)) {
+      $l = ($line -replace '#.*$', '').Trim(); if (-not $l) { continue }
+      $p = @($l -split '\s+')
+      if ($p.Count -lt 3 -or $p[1] -notmatch '^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$') { continue }
+      try { $d0 = [datetime]::ParseExact($p[0], 'yyyy-MM-dd', $null) } catch { continue }
+      $s = $d0.Add([timespan]::Parse($matches[1])).AddMinutes(-$EVENT_PRECOOL_MIN); $e = $d0.Add([timespan]::Parse($matches[2]))
+      if ($t -lt $s -or $t -ge $e) { continue }
+      foreach ($z in $p[2..($p.Count - 1)]) {
+        $z = $(if ($ZONE_ALIAS.Contains($z.ToLower())) { $ZONE_ALIAS[$z.ToLower()] } else { $z })
+        if ($z -eq '全部') { $pan += Zone-Panels } elseif ($ZONES.Contains($z)) { $pan += $ZONES[$z] } elseif ($z -match '^SG_') { $pan += $z }
+      }
+      $txt += "$($p[1]) $($p[2..($p.Count - 1)] -join ' ')"
+    }
+  }
+  [pscustomobject]@{ panels = @($pan | Select-Object -Unique); text = ($txt -join '；') }
+}
+$EVENT_FLOOR = 70; $EVT_HOT_UP = 0.25; $EVT_HOT_DN = 0.15   # 活動中：上限至少 70%，活動區熱房間 ≥ 25% 每 10 分鐘 +10%
+
 function Read-Fcu {
   if ($null -eq $script:fcuTags) {
     if (-not (Test-Path $FcuList)) { return $null }
@@ -142,7 +175,7 @@ function Read-Fcu {
       $oa[$matches[1]][$matches[2]] = Num $v[$i]
     }
   }
-  $on = 0; $hot = 0; $n = 0; $sum = 0.0; $fl = @{}; $rooms = @{}
+  $on = 0; $hot = 0; $n = 0; $sum = 0.0; $fl = @{}; $rooms = @{}; $zrooms = @{}
   # 「Run」只代表有通電／連線，不代表有開機（B425 實測 2026-11-06）。真正開機 = 風速 High/Middle/Low 任一為 1。
   $runKeys = @($u.Keys | Where-Object { $u[$_].Run -gt 0.5 })
   $fanState = 'none'; $fanOff = 0; $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -168,6 +201,7 @@ function Read-Fcu {
         # 以「房間」（同一面板 _Pnn）為單位：同房有一台已經涼了，就代表房間不熱（例如太冷只開一台，B443/B425 實測）
         $room = $k -replace '_FCU\d+$', ''
         if (-not $rooms.ContainsKey($room) -or $dlt -lt $rooms[$room]) { $rooms[$room] = $dlt }
+        if (In-Zone $k) { $zd = $f.T - [math]::Max($f.setT, $ZONE_SET_MIN); if (-not $zrooms.ContainsKey($room) -or $zd -lt $zrooms[$room]) { $zrooms[$room] = $zd } }
       }
     }
   }
@@ -190,7 +224,7 @@ function Read-Fcu {
   }
   $dew = $null; if ($dps.Count) { $s = @($dps | Sort-Object); $dew = $s[[int][math]::Floor(($s.Count - 1) / 2)] }
   [pscustomobject]@{ on = $on; n = $n; hot = $(if ($n) { $hot / $n } else { $null }); dt = $(if ($n) { $sum / $n } else { $null })
-                     floors = $floors; dew = $dew; oa_n = $dps.Count; fan = "$fanState off=$fanOff of=$($runKeys.Count) $([int]$sw.Elapsed.TotalSeconds)s" }
+                     floors = $floors; zone = $zrooms; dew = $dew; oa_n = $dps.Count; fan = "$fanState off=$fanOff of=$($runKeys.Count) $([int]$sw.Elapsed.TotalSeconds)s" }
 }
 
 function Read-Demand {
@@ -233,7 +267,7 @@ $base = $null                # 沒有需量保護時的負載上限（人員設�
 $spSim = $null; $spLastWrite = $null; $lastSpStep = [datetime]::MinValue; $spWant = $null
 $cap = $null                 # 需量保護上限（null = 沒有在限制）
 $lastWrite = $null
-$lastDStep = [datetime]::MinValue; $lastCStep = [datetime]::MinValue; $lastBoost = [datetime]::MinValue; $lastEco = [datetime]::MinValue; $afterSet = $false
+$lastDStep = [datetime]::MinValue; $lastCStep = [datetime]::MinValue; $lastBoost = [datetime]::MinValue; $lastEco = [datetime]::MinValue; $afterSet = $false; $evtOn = $false; $evtText = ''; $evtHot = $null
 $clearSince = $null; $lostSince = $null; $manualUntil = [datetime]::MinValue
 $fcu = $null; $fcuAt = [datetime]::MinValue
 $lastAction = ''; $lastActionAt = ''
@@ -285,7 +319,7 @@ function Save($now, $d, $m, $cur, $tgt, $action, $note) {
     sp_read = $(if ($m) { $m.sp1 }); sp = $spE; floors = $(if ($fcu) { $fcu.floors }); dewpoint = $(if ($fcu) { R1 $fcu.dew }); oa_n = $(if ($fcu) { $fcu.oa_n }); fan_check = $(if ($fcu) { $fcu.fan })
     chws_c = $(if ($m) { R1 $m.chws }); chws_target = $tgt; fcu_on = $(if ($fcu) { $fcu.on })
     hot_share = $(if ($fcu -and $null -ne $fcu.hot) { [math]::Round($fcu.hot, 2) }); ratio = $r
-    manual_hold = ($now -lt $manualUntil); note = $note; last_action = $lastAction; last_action_at = $lastActionAt
+    manual_hold = ($now -lt $manualUntil); event = $evtText; event_hot = $evtHot; note = $note; last_action = $lastAction; last_action_at = $lastActionAt
   }
   ($st | ConvertTo-Json -Compress -Depth 5) | Out-File (Join-Path $Out 'mag_auto_status.json') -Encoding utf8
   if ($action) { Write-Host $row }
@@ -355,7 +389,29 @@ function Step {
   if ($null -eq $cap -and $now -ge $manualUntil -and $m.run -gt 0 -and $m.enabled -ge 0.5 -and $note -notmatch 'demand-(derate|release)') {
     $tight = ($null -eq $ratio -or $ratio -ge $BOOST_OFF)
     $hmNow = $now.ToString('HH:mm')
-    if ($hmNow -ge $AFTER_START) {
+    $ev = Event-Now $now; $script:evtText = $ev.text; $script:evtHot = $null
+    if ($ev.panels.Count) {
+      # 場地租借活動：活動區熱房間決定上限（至少 70%），不套 18:00 固定 40% 與週末 30%
+      $zr = @(); if ($fcu -and $fcu.zone) { foreach ($k in $fcu.zone.Keys) { foreach ($pp in $ev.panels) { if ($k.StartsWith($pp)) { $zr += $fcu.zone[$k]; break } } } }
+      if ($zr.Count) { $script:evtHot = [math]::Round(@($zr | Where-Object { $_ -ge 1.0 }).Count / $zr.Count, 2) }
+      $top = $(if ($tight) { $BASE_LO } else { $BASE_HI })
+      $evFl = $(if ($eco) { [math]::Max($EVENT_FLOOR, (Eco-Floor $now)) } else { $EVENT_FLOOR })
+      $wantB = $base
+      if (-not $evtOn -or $base -lt $evFl - 0.5) { $wantB = [math]::Max($base, $evFl) }
+      elseif ($null -eq $evtHot) { }
+      elseif ($evtHot -ge $EVT_HOT_UP) { if (($now - $lastEco).TotalSeconds -ge $ECO_STEP_S) { $wantB = $base + $ECO_STEP } }
+      elseif ($evtHot -lt $EVT_HOT_DN) { if (($now - $lastEco).TotalSeconds -ge $ECO_STEP_S) { $wantB = [math]::Max($evFl, $base - $ECO_STEP) } }
+      $wantB = [math]::Min([math]::Max($top, $evFl), $wantB); if ($tight) { $wantB = [math]::Min($BASE_LO, $wantB) }
+      $script:evtOn = $true; $script:afterSet = $false
+      if ([math]::Abs($wantB - $base) -ge 0.5) { $note = ($note + $(if ($wantB -gt $base) { ' event-up' } else { ' event-down' })).Trim(); $script:base = $wantB; $script:lastEco = $now }
+    } elseif ($evtOn) {
+      # 活動結束：回到平常（18:00 後 40%、週末 30%、平日照時段基準）
+      $script:evtOn = $false; $script:lastEco = $now
+      $script:base = $(if ($hmNow -ge $AFTER_START) { $script:afterSet = $true; $AFTER_LIMIT } elseif ($eco) { Eco-Floor $now } elseif ($now.DayOfWeek -eq 'Saturday' -or $now.DayOfWeek -eq 'Sunday') { 30 } else { $BASE_LO })
+      $note = ($note + ' event-end').Trim()
+    }
+    if ($ev.panels.Count -or $note -match 'event-end') { }
+    elseif ($hmNow -ge $AFTER_START) {
       # 18:00 以後加班空調：上限固定 40%（不因熱房間加）
       if (-not $afterSet -or [math]::Abs($base - $AFTER_LIMIT) -ge 0.5) {
         $script:base = $AFTER_LIMIT; $script:afterSet = $true; $note = ($note + ' after-hours').Trim()
@@ -363,7 +419,7 @@ function Step {
     } elseif ($afterSet) {
       # 隔天開機：回到平時上限
       $script:afterSet = $false
-      $script:base = $(if ($eco) { Eco-Floor $now } elseif ($now.DayOfWeek -eq 'Saturday' -or $now.DayOfWeek -eq 'Sunday') { 30 } else { $BASE_LO }); $script:lastEco = $now;   # 週末照慣例 30% $note = ($note + ' after-hours-end').Trim()
+      $script:base = $(if ($eco) { Eco-Floor $now } elseif ($now.DayOfWeek -eq 'Saturday' -or $now.DayOfWeek -eq 'Sunday') { 30 } else { $BASE_LO }); $script:lastEco = $now; $note = ($note + ' after-hours-end').Trim()   # 週末照慣例 30%
     }
     if ($hmNow -ge $AFTER_START -or $note -match 'after-hours-end') { }
     elseif ($eco) {

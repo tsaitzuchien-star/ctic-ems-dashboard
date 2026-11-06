@@ -454,7 +454,7 @@
                 </div></div>
             <div class="col-span-full grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="glass-card p-5 border-l-4 border-l-sky-400"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-gauge-high mr-2 text-sky-400"></i>控制狀態</h3>
-                    ${rtRow('時段基準上限', 'rt-ecofloor')}${rtRow('目前負載上限', 'rt-ecolimit', '%')}
+                    ${rtRow('場地活動', 'rt-event')}${rtRow('時段基準上限', 'rt-ecofloor')}${rtRow('目前負載上限', 'rt-ecolimit', '%')}
                     <p class="text-xs text-slate-400 mt-3 mb-1">各樓層熱房間比例（運轉中送風機，室溫 ≥ 設定+1°C）</p><div id="rt-floors" class="text-sm"></div>
                     <p class="text-xs text-slate-400 mt-3 mb-1">送風機巡檢（溫度下限 24°C、下班未申請關機）</p><div id="rt-guard" class="text-sm"></div></div>
                 <div class="glass-card p-5 border-l-4 border-l-emerald-400"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-leaf mr-2 text-emerald-400"></i>今日節電成效</h3>
@@ -615,6 +615,7 @@
         function updateSavings(d) {
             const now = new Date(), m = rt && rt.mag, a = (rt && rt.ac) || {}, g = d.fcu_guard, s = d.savings, t = d.target;
             rtSet('rt-ecofloor', ecoFloor(now));
+            { const ev = (m && m.event) || (g && g.event) || ''; rtSet('rt-event', ev ? `<span class="text-amber-300">${ev}</span>${m && m.event_hot != null ? `・活動區熱 ${fmt(m.event_hot * 100, 0)}%` : ''}` : '<span class="text-slate-400">無</span>'); }
             rtSet('rt-ecolimit', fmt(a.mag_limit_pct ?? (m && m.limit), 0));
             const fl = (m && m.floors) || (d.mag_ctl && d.mag_ctl.floors) || {};
             rtSet('rt-floors', Object.keys(fl).length ? Object.entries(fl).map(([k, v]) => { const p = (v.hot || 0) * 100, lim = k === '4F' ? 40 : 25;
