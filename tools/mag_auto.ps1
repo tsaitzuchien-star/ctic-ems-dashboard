@@ -220,7 +220,7 @@ function Save($now, $d, $m, $cur, $tgt, $action, $note) {
     time = $now.ToString('yyyy-MM-dd HH:mm:ss'); mode = $mode; comfort_on = (-not $NoComfort); off = (Test-Path $Off)
     enabled = $(if ($m) { $m.enabled -ge 0.5 }); running = $(if ($m) { $m.run -gt 0 })
     limit_read = $(if ($m) { $m.limit }); limit = $cur; base = $base; cap = $cap
-    sp_read = $(if ($m) { $m.sp1 }); sp = $spE; floors = $(if ($fcu) { $fcu.floors }); dewpoint = $(if ($fcu) { R1 $fcu.dew })
+    sp_read = $(if ($m) { $m.sp1 }); sp = $spE; floors = $(if ($fcu) { $fcu.floors }); dewpoint = $(if ($fcu) { R1 $fcu.dew }); oa_n = $(if ($fcu) { $fcu.oa_n })
     chws_c = $(if ($m) { R1 $m.chws }); chws_target = $tgt; fcu_on = $(if ($fcu) { $fcu.on })
     hot_share = $(if ($fcu -and $null -ne $fcu.hot) { [math]::Round($fcu.hot, 2) }); ratio = $r
     manual_hold = ($now -lt $manualUntil); note = $note; last_action = $lastAction; last_action_at = $lastActionAt
@@ -282,14 +282,15 @@ function Step {
   # ---- 2) 出水溫度重設（主機出水設定值）----
   $band = Sp-Band $now
   $hi = $band[1]
-  if ($fcu -and $null -ne $fcu.dew -and $fcu.dew -gt $DEW_CAP_C) { $hi = [math]::Min($hi, $DEW_SP_MAX) }
+  if ($fcu -and $null -ne $fcu.dew -and $fcu.oa_n -ge 3 -and $fcu.dew -gt $DEW_CAP_C) { $hi = [math]::Min($hi, $DEW_SP_MAX) }
   $tgt = $sp; $why = ''
   if ($now -lt $manualUntil) { $note = ($note + ' manual-hold').Trim() }
   elseif (-not $NoComfort -and (In-Window $now) -and $m.run -gt 0 -and $null -ne $sp -and $sp -gt 0) {
-    if ($false) { }
-    elseif ($sp -gt $hi + 0.01) { $tgt = $hi; $why = '出水設定超過上限' }
-    elseif ($sp -lt $band[0] - 0.01) { $tgt = $band[0]; $why = '出水設定低於下限' }
-    elseif (($now - $lastSpStep).TotalSeconds -ge $SP_STEP_S -and $fcu -and $fcu.floors) {
+    $stepOk = (($now - $lastSpStep).TotalSeconds -ge $SP_STEP_S)
+    if (-not $stepOk) { }
+    elseif ($sp -gt $hi + 0.01) { $tgt = [math]::Max($hi, $sp - $SP_STEP); $why = $(if ($hi -lt $band[1]) { "室外露點 $(R1 $fcu.dew)°C 偏高，出水上限 $hi°C" } else { '出水設定超過季節上限' }) }
+    elseif ($sp -lt $band[0] - 0.01) { $tgt = [math]::Min($band[0], $sp + $SP_STEP); $why = '出水設定低於季節下限' }
+    elseif ($fcu -and $fcu.floors) {
       $hm = 0.0; $hmFloor = ''; $allOk = $true
       foreach ($k in $fcu.floors.Keys) {
         $f = $fcu.floors[$k]
@@ -306,7 +307,6 @@ function Step {
         $tgt = $sp + $SP_STEP; $why = '房間普遍偏涼，出水調高省電'
       }
     }
-    $tgt = [math]::Max($band[0], [math]::Min($hi, $tgt))
     if ([math]::Abs($tgt - $sp) -ge 0.25) {
       $note = ($note + " sp $sp->$tgt").Trim()
       $action = Write-Sp $tgt $why
