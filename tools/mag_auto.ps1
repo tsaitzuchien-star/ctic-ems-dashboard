@@ -122,7 +122,7 @@ function Read-Fcu {
       $oa[$matches[1]][$matches[2]] = Num $v[$i]
     }
   }
-  $on = 0; $hot = 0; $n = 0; $sum = 0.0; $fl = @{}
+  $on = 0; $hot = 0; $n = 0; $sum = 0.0; $fl = @{}; $rooms = @{}
   # 「Run」只代表有通電／連線，不代表有開機（B425 實測 2026-11-06）。真正開機 = 風速 High/Middle/Low 任一為 1。
   $runKeys = @($u.Keys | Where-Object { $u[$_].Run -gt 0.5 })
   $fanState = 'none'; $fanOff = 0; $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -144,13 +144,19 @@ function Read-Fcu {
     if ($f.Run -gt 0.5) {
       $on++
       if ($f.T -gt 5 -and $f.T -lt 40 -and $f.setT -ge 10 -and $f.setT -le 35) {
-        $n++; $dlt = $f.T - [math]::Max($f.setT, $SET_FLOOR); $sum += $dlt   # 使用者設太低（例如 13.5°C）以 23°C 計，不算冷氣不足
-        $floor = $(if ($k -match '^SG_(B1|\d)F') { $(if ($matches[1] -eq 'B1') { 'B1F' } else { $matches[1] + 'F' }) } else { '?' })
-        if (-not $fl.ContainsKey($floor)) { $fl[$floor] = @{ n = 0; hot = 0 } }
-        $fl[$floor].n++
-        if ($dlt -ge 1.0) { $hot++; $fl[$floor].hot++ }
+        $dlt = $f.T - [math]::Max($f.setT, $SET_FLOOR)   # 使用者設太低（例如 13.5°C）以 23°C 計，不算冷氣不足
+        # 以「房間」（同一面板 _Pnn）為單位：同房有一台已經涼了，就代表房間不熱（例如太冷只開一台，B443/B425 實測）
+        $room = $k -replace '_FCU\d+$', ''
+        if (-not $rooms.ContainsKey($room) -or $dlt -lt $rooms[$room]) { $rooms[$room] = $dlt }
       }
     }
+  }
+  foreach ($room in $rooms.Keys) {
+    $dlt = $rooms[$room]; $n++; $sum += $dlt
+    $floor = $(if ($room -match '^SG_(B1|\d)F') { $(if ($matches[1] -eq 'B1') { 'B1F' } else { $matches[1] + 'F' }) } else { '?' })
+    if (-not $fl.ContainsKey($floor)) { $fl[$floor] = @{ n = 0; hot = 0 } }
+    $fl[$floor].n++
+    if ($dlt -ge 1.0) { $hot++; $fl[$floor].hot++ }
   }
   $floors = [ordered]@{}
   foreach ($k in ($fl.Keys | Sort-Object)) { $floors[$k] = [ordered]@{ n = $fl[$k].n; hot = [math]::Round($fl[$k].hot / $fl[$k].n, 2) } }
