@@ -29,6 +29,7 @@ $TRIG = 0.95; $HARD = 1.00; $CLEAR = 0.88; $CLEAR_S = 300
 $D_STEP = 10; $D_STEP_S = 60         # 需量降載：每步 10%、間隔 60 秒
 $SP_STEP = 0.5; $SP_STEP_S = 600     # 出水設定：每步 0.5°C、間隔 10 分鐘
 $SP_HARD_MIN = 10.0; $SP_HARD_MAX = 14.0
+$SET_FLOOR = 23.0                    # 熱房間判斷：室溫 ≥ max(設定, 23) + 1°C
 $C_START = '07:30'; $C_END = '19:00'; $PULLDOWN_END = '09:00'
 $HOT_UP = 0.30; $HOT_OK = 0.10; $HOT_4F_HOLD = 0.20   # 熱房間比例門檻
 $DEW_CAP_C = 20.0; $DEW_SP_MAX = 12.0                 # 室外露點高時出水上限
@@ -126,7 +127,7 @@ function Read-Fcu {
     if ($f.Run -gt 0.5) {
       $on++
       if ($f.T -gt 5 -and $f.T -lt 40 -and $f.setT -ge 10 -and $f.setT -le 35) {
-        $n++; $dlt = $f.T - $f.setT; $sum += $dlt
+        $n++; $dlt = $f.T - [math]::Max($f.setT, $SET_FLOOR); $sum += $dlt   # 使用者設太低（例如 13.5°C）以 23°C 計，不算冷氣不足
         $floor = $(if ($k -match '^SG_(B1|\d)F') { $(if ($matches[1] -eq 'B1') { 'B1F' } else { $matches[1] + 'F' }) } else { '?' })
         if (-not $fl.ContainsKey($floor)) { $fl[$floor] = @{ n = 0; hot = 0 } }
         $fl[$floor].n++
