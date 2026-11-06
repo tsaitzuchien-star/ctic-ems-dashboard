@@ -8,7 +8,7 @@ r"""中創園區 本機即時能源網站（在監控電腦執行，只給監控
 用內建網頁伺服器在 http://<監控電腦>:8088/ 提供完整園區能源網站（與雲端版相同，另多一個
 「即時監控」分頁每 5 秒更新），精簡版即時頁在 /live。
 網站檔案（index.html、data\*.json）放在本程式旁的 site\ 資料夾。
-只放行 ALLOW_IPS 裡的電腦（本機與空調監控主機），其他電腦一律 403。
+只放行 ALLOW_IPS 裡的電腦（本機與空調監控主機）與 allow_ips.txt 列的 IP／網段（例如 Tailscale 手機），其他一律 403。
 
 需要：InTouch WindowViewer 開著、系統管理員權限（與 view.exe 同權限才能 DDE）、pywin32。
 用法：
@@ -25,6 +25,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import ems_calc
+import line_push
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(HERE, "local_live_state.json")
@@ -34,13 +35,47 @@ MAIN_TAG = "F0_B2P2_MCB_KW_PV"
 TAIPOWER_OFFSET = 10.0          # 台電電表比 BMS 高約 10 kW（2026-11 對帳確認）
 AC_SHARE = r"\\10.10.2.4\AC_Export"
 AC_JSON = os.path.join(AC_SHARE, "ac_latest.json")
+MAG_JSON = os.path.join(AC_SHARE, "mag_auto_status.json")   # 磁浮自動控制 mag_auto.ps1 的狀態
+GUARD_JSON = os.path.join(AC_SHARE, "fcu_guard_status.json")   # 送風機巡檢 fcu_guard.ps1 的狀態
 SAMPLE_S = 5
 HISTORY = 2 * 3600 // SAMPLE_S  # 網頁趨勢圖保留 2 小時
 SITE_DIR = os.path.join(HERE, "site")
 CIRCUIT_S = 60                  # 全迴路讀取間隔
 ALLOW_IPS = {"127.0.0.1", "::1", "10.10.2.20", "10.10.2.4"}   # 監控電腦本機、空調監控主機
+ALLOW_FILE = os.path.join(HERE, "allow_ips.txt")   # 另外允許的 IP 或網段（每行一個，例如 Tailscale 手機 100.101.102.103）
+
+
+def load_allow_nets():
+    import ipaddress
+    nets = []
+    try:
+        with open(ALLOW_FILE, encoding="utf-8-sig") as f:
+            for line in f:
+                t = line.split("#", 1)[0].strip()
+                if t:
+                    try:
+                        nets.append(ipaddress.ip_network(t, strict=False))
+                    except ValueError:
+                        pass
+    except OSError:
+        pass
+    return nets
+
+
+ALLOW_NETS = load_allow_nets()
+
+
+def allowed(ip):
+    if ip in ALLOW_IPS:
+        return True
+    import ipaddress
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(a in n for n in ALLOW_NETS)
 AC_TREND_KEYS = ["mag_c1_pct", "mag_c2_pct", "mag_c1_kw", "mag_c2_kw", "ice01_pct", "ice02_pct",
-                 "mag_chws_c", "mag_chwr_c", "flow_m3h"]
+                 "mag_chws_c", "mag_chwr_c", "flow_m3h", "mag_limit_pct", "chws_target"]
 
 
 def log(msg):
@@ -195,6 +230,63 @@ def read_ac():
         return None
 
 
+def read_mag():
+    try:
+        with open(MAG_JSON, encoding="utf-8-sig") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def read_guard():
+    try:
+        with open(GUARD_JSON, encoding="utf-8-sig") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def load_site_json(name):
+    """網站資料夾 site\\data\\name（沒有就找本程式旁邊），讀不到回傳 None。"""
+    for p in (os.path.join(SITE_DIR, "data", name), os.path.join(HERE, name)):
+        try:
+            with open(p, encoding="utf-8-sig") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+# ---------------- 需量預測（只有這一項來自雲端：預測系統在 GitHub 上每天 17:47 計算） ----------------
+FORECAST_URL = "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/live.json"
+FORECAST = {"day": None, "data": None, "at": 0.0}
+
+
+def fetch_forecast():
+    """每 15 分鐘抓一次雲端 live.json 裡的 forecast（逐時預測 kW）和太陽能 pv。抓不到就沿用舊的，網站其他部分不受影響。"""
+    import subprocess
+    import urllib.request
+    while True:
+        d = None
+        try:
+            with urllib.request.urlopen(FORECAST_URL, timeout=20) as r:
+                d = json.load(r)
+        except Exception:
+            try:                                   # 公司網路攔 SSL：改用 PowerShell
+                ps = ("[Net.ServicePointManager]::SecurityProtocol='Tls12';"
+                      f"(Invoke-WebRequest -UseBasicParsing -Uri '{FORECAST_URL}').Content")
+                out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, timeout=60,
+                                     creationflags=0x08000000 if os.name == "nt" else 0)
+                d = json.loads(out.stdout.decode("utf-8", "replace"))
+            except Exception as e:
+                log(f"抓不到雲端預測：{type(e).__name__}: {e}")
+        if d and d.get("forecast"):
+            FORECAST.update(day=(d.get("updated") or "")[:10], data=d["forecast"], at=time.time())
+        if d and d.get("pv"):                      # 太陽能（T-REC 只有雲端有）：一起帶回來
+            FORECAST.update(pv=d["pv"], pv_day=(d["pv"].get("updated") or d.get("updated") or "")[:10])
+        time.sleep(900)
+
+
 # ---------------- 全迴路（本機版總覽與房間資料） ----------------
 class Circuits:
     """15 分鐘整點讀值（G: 的 Circuit_*.csv＋本程式自己每 15 分鐘補的一列）＋最新一次讀值。"""
@@ -211,6 +303,7 @@ class Circuits:
         self.csv_rows = {}                    # 檔名 -> (mtime, rows)
         self.own = {}                         # 15 分鐘時段 -> (實際讀取時間, 讀值)（本程式自己讀的）
         self.month_first = {}                 # "YYYY-MM" -> 本月第一列讀值
+        self.day_first = {}                   # Circuit 檔路徑 -> 第一列 (時間, 讀值)
         self.live = None                      # (時間, 讀值)
         self.recent = deque(maxlen=20)        # 最近 20 次（每分鐘）讀值，算滾動 15 分鐘 kW
 
@@ -268,6 +361,43 @@ class Circuits:
         self.month_first[key] = first
         return first
 
+    def month_daily(self, now, known=None):
+        """本月每天總表 kWh：known（雲端歷史補的）優先，其餘用每天 Circuit 檔第一列的累積度數相減，今天用即時讀值。"""
+        key = f"{now:%Y-%m}"
+        firsts = {}
+        if self.out_dir:
+            for n in sorted(os.listdir(self.out_dir)):
+                if not (n.startswith(f"Circuit_{key}-") and n.endswith(".csv")):
+                    continue
+                day = n[8:18]
+                path = os.path.join(self.out_dir, n)
+                hit = self.day_first.get(path)
+                if hit is None:
+                    with open(path, encoding="utf-8-sig") as f:
+                        rows = ems_calc.parse_wide(f.readline() + f.readline())
+                    hit = rows[0] if rows else None
+                    if hit is not None:
+                        self.day_first[path] = hit
+                if hit and ems_calc.MAIN_KWH in hit[1]:
+                    firsts[day] = (hit[0], hit[1][ems_calc.MAIN_KWH])
+        out = dict(known or {})
+        days = sorted(firsts)
+        for i, d in enumerate(days):
+            if d in out:
+                continue
+            t0, v0 = firsts[d]
+            if t0.hour > 0 or t0.minute > 20:          # 這天的檔不是從午夜開始（例如 11/5 14:00 才開始），不算
+                continue
+            if i + 1 < len(days):
+                v1 = firsts[days[i + 1]][1]
+            elif d == now.date().isoformat() and self.live and ems_calc.MAIN_KWH in self.live[1]:
+                v1 = self.live[1][ems_calc.MAIN_KWH]
+            else:
+                continue
+            if 0 <= v1 - v0 < 20000:
+                out[d] = round(v1 - v0, 1)
+        return out
+
     def rows(self, now):
         """昨天＋今天的 15 分鐘整點讀值，CSV 優先，缺的用本程式自己讀的補。"""
         merged = dict(self._csv(now.date() - dt.timedelta(days=1)) + self._csv(now.date()))
@@ -279,14 +409,24 @@ class Circuits:
 
     def build(self, now, ac_rows):
         rows = self.rows(now)
-        data = ems_calc.build(rows, None, now)
+        fc = FORECAST.get("data") if FORECAST.get("day") == now.date().isoformat() else None
+        data = ems_calc.build(rows, fc, now)
         data["source"] = "local"
         if self.live and ems_calc.MAIN_KW in self.live[1]:
             data["now_kw"] = round(self.live[1][ems_calc.MAIN_KW], 1)
         data["ac"] = ems_calc.ac_summary(ac_rows, now) if ac_rows else None
-        data["pv"] = None
+        data["pv"] = FORECAST.get("pv") if FORECAST.get("pv_day") == now.date().isoformat() else None
         fcu, fcu_rooms = read_fcu(now)
         data["fcu"] = fcu
+        try:                                   # 節電成效、-2.1% 目標、控制程式狀態（2026-11-06）
+            today_raw = [(t, kw) for t, kw in ems_calc.intervals(rows) if t.date() == now.date()]
+            data["savings"] = ems_calc.savings(today_raw, now, load_site_json("savings_baseline.json"))
+            tcfg = load_site_json("target.json")
+            data["target"] = ems_calc.target_status(self.month_daily(now, (tcfg or {}).get("known_days")), now, tcfg)
+            data["mag_ctl"] = read_mag()
+            data["fcu_guard"] = read_guard()
+        except Exception as e:
+            log(f"節電成效計算失敗：{type(e).__name__}: {e}")
         # 房間卡片：kW 用最近 15 分鐘滾動（今天最後一列換成即時讀值，前一列換成約 15 分鐘前的讀值）
         room_rows = rows
         if self.live:
@@ -360,7 +500,7 @@ class Handler(BaseHTTPRequestHandler):
         ip = self.client_address[0]
         if ip.startswith("::ffff:"):
             ip = ip[7:]
-        if ip not in ALLOW_IPS:
+        if not allowed(ip):
             self.send_error(403, "Only the monitoring PC and AC PC may view this site")
             return
         path = self.path.split("?", 1)[0]
@@ -493,10 +633,13 @@ def main():
 
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    threading.Thread(target=fetch_forecast, daemon=True).start()
     log(f"本機即時網站啟動：http://localhost:{PORT}/")
-    ac, ac_at = None, 0.0
+    ac, ac_at, mag = None, 0.0, None
+    notifier, ems_data = line_push.Notifier(), None
+    log("LINE 推播：" + ("已啟用" if notifier.enabled else "未設定（沒有 line_token.txt）"))
     circ, circ_at = Circuits(), 0.0
-    ac_trend = deque(maxlen=240)          # 每分鐘一點，保留 4 小時
+    ac_trend = deque(maxlen=720)          # 每分鐘一點，保留 12 小時
     while True:
         t0 = time.time()
         now = dt.datetime.now()
@@ -504,14 +647,16 @@ def main():
             kw = reader.main_kw() + TAIPOWER_OFFSET
             dem.add(now, kw)
             if t0 - ac_at > 30:
-                ac, ac_at = read_ac(), t0
+                ac, ac_at, mag = read_ac(), t0, read_mag()
                 if ac and ac.get("viewer_ok") and (not ac_trend or ac_trend[-1][0] != ac.get("time", "")[11:16]):
-                    ac_trend.append([ac.get("time", "")[11:16]] + [ac.get(k) for k in AC_TREND_KEYS])
+                    src = dict(ac, chws_target=(mag or {}).get("chws_target"))
+                    ac_trend.append([ac.get("time", "")[11:16]] + [src.get(k) for k in AC_TREND_KEYS])
             if t0 - circ_at >= CIRCUIT_S:
                 circ_at = t0
                 try:
                     circ.read(reader.conv, now)
                     data, rooms = circ.build(now, read_ac_rows(now))
+                    ems_data = data
                     # 本程式啟動前的時段用全迴路總表度數補（總表 kWh 與台電同基準）
                     if dem.day == now.date().isoformat():
                         for hm, v in zip(data["times"], data["total"]):
@@ -526,12 +671,14 @@ def main():
             with STATE_LOCK:
                 LIVE.clear()
                 LIVE.update({"ok": True, "time": now.strftime("%H:%M:%S"), "offset": TAIPOWER_OFFSET,
-                             "demand": snap, "trend": list(dem.trend), "ac": ac,
+                             "demand": snap, "trend": list(dem.trend), "ac": ac, "mag": mag,
                              "ac_trend_keys": AC_TREND_KEYS, "ac_trend": list(ac_trend)})
+            notifier.tick(now, True, snap, ac, mag, ems_data)
         except Exception as e:
             with STATE_LOCK:
                 LIVE.clear()
                 LIVE.update({"ok": False, "error": f"讀不到 InTouch（WindowViewer 有開嗎？）{type(e).__name__}"})
+            notifier.tick(now, False, None, ac, mag, ems_data)
             log(f"讀取失敗：{type(e).__name__}: {e}")
             time.sleep(25)
         time.sleep(max(0.5, SAMPLE_S - (time.time() - t0)))

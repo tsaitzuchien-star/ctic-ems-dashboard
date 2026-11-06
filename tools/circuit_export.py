@@ -120,8 +120,8 @@ def copy_ac_files(out_dir):
     """把空調監控主機的每分鐘記錄複製到雲端資料夾；讀不到就記一筆，不影響迴路匯出。"""
     import shutil
     today = dt.date.today()
-    names = [f"{p}_{d:%Y-%m-%d}.csv" for p in ("AC", "FCU") for d in (today - dt.timedelta(days=1), today)]
-    names.append("ac_latest.json")
+    names = [f"{p}_{d:%Y-%m-%d}.csv" for p in ("AC", "FCU", "mag_auto", "fcu_guard") for d in (today - dt.timedelta(days=1), today)]
+    names += ["ac_latest.json", "mag_auto_status.json", "fcu_guard_status.json"]
     copied = 0
     try:
         for n in names:

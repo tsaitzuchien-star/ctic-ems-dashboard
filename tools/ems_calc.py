@@ -524,3 +524,84 @@ def fcu_summary(rows, fmap, now):
         "series": {"times": times, "oat_c": oat_s, "fcu_on": on_s, "room_t_c": tin_s},
     }
     return summary, {r: pack(ss) for r, ss in rooms.items()}
+
+
+# ---------------- 節電成效與年度目標（2026-11-06） ----------------
+def savings(today_raw, now, base, holiday=False):
+    """今天到目前為止的磁浮與總表 kWh，對比手動控制日同時段的平均（base = data/savings_baseline.json）。"""
+    if not base:
+        return None
+    kind = "weekend" if holiday or now.weekday() >= 5 else "weekday"
+    b = base.get(kind)
+    if not b:
+        return None
+    out = {"day_type": kind, "base_days": len(b.get("days", []))}
+    for key, tag in (("mag", MAG_TAG), ("main", MAIN_KWH)):
+        got = base_sum = 0.0
+        n = 0
+        last = None
+        for t, kw in today_raw:
+            if tag not in kw:
+                continue
+            slot = t.hour * 4 + t.minute // 15
+            got += kw[tag] / 4
+            base_sum += b[key][slot]
+            n += 1
+            last = t
+        if n == 0:
+            out[key] = None
+            continue
+        saved = base_sum - got
+        out[key] = {"kwh": round(got, 1), "base": round(base_sum, 1), "saved": round(saved, 1),
+                    "pct": round(saved / base_sum * 100, 1) if base_sum > 0 else None,
+                    "slots": n, "upto": (last + timedelta(minutes=15)).strftime("%H:%M"),
+                    "base_day": b[f"{key}_day"]}
+    return out
+
+
+def target_status(daily, now, cfg):
+    """帳單月節電目標（target_pct）：daily = {"YYYY-MM-DD": 總表 kWh}（本月，今天可為部分），cfg = data/target.json。"""
+    if not cfg or not daily:
+        return None
+    import calendar
+    y, m = map(int, cfg["month"].split("-"))
+    if (now.year, now.month) != (y, m):
+        return None
+    ndays = calendar.monthrange(y, m)[1]
+    cap_bill = cfg["fy_prev_total"] * (1 + cfg["target_pct"] / 100) - cfg["bill_ytd"]
+    cap_meter = cap_bill / cfg["bill_per_meter"]
+    today = now.date().isoformat()
+    done = {d: v for d, v in daily.items() if d < today}
+    mtd = sum(daily.values())
+    wd = [v for d, v in done.items() if datetime.strptime(d, "%Y-%m-%d").weekday() < 5]
+    we = [v for d, v in done.items() if datetime.strptime(d, "%Y-%m-%d").weekday() >= 5]
+    rem = [datetime(y, m, d) for d in range(now.day + 1, ndays + 1)]
+    rem_wd = sum(1 for d in rem if d.weekday() < 5)
+    rem_we = len(rem) - rem_wd
+    avg_wd = sum(wd) / len(wd) if wd else None
+    avg_we = sum(we) / len(we) if we else None
+    today_full = (avg_we if now.weekday() >= 5 else avg_wd) or 0
+    today_left = max(today_full - daily.get(today, 0), 0)
+    proj = mtd + today_left + rem_wd * (avg_wd or 0) + rem_we * (avg_we or 0)
+    left_days = len(rem) + 1 - (daily.get(today, 0) / today_full if today_full else 0)
+    need = (cap_meter - mtd) / left_days if left_days > 0 else None
+    proj_bill = proj * cfg["bill_per_meter"]
+    year = cfg["bill_ytd"] + proj_bill
+    pm = cfg.get("people_monthly")
+    ppl = sum(pm) / len(pm) if pm else None
+    pprev = cfg.get("people_prev")
+    pc = {}
+    if ppl and pprev:
+        prev_pc = cfg["fy_prev_total"] / pprev
+        proj_pc = year / ppl
+        pc = {"people_prev": pprev, "people_avg": round(ppl, 1), "people_now": pm[-1],
+              "per_cap_prev": round(prev_pc), "per_cap_proj": round(proj_pc),
+              "per_cap_target": round(cfg["fy_prev_total"] * (1 + cfg["target_pct"] / 100) / ppl),
+              "per_cap_pct": round((proj_pc / prev_pc - 1) * 100, 1)}
+    return {"month": cfg["month"], "mtd_kwh": round(mtd), "days_done": len(done),
+            "avg_weekday": round(avg_wd) if avg_wd else None, "avg_weekend": round(avg_we) if avg_we else None,
+            "cap_meter": round(cap_meter), "cap_bill": round(cap_bill), "proj_meter": round(proj), "proj_bill": round(proj_bill),
+            "need_per_day": round(need) if need else None, "rem_weekdays": rem_wd, "rem_weekends": rem_we,
+            "proj_year_pct": round((year / cfg["fy_prev_total"] - 1) * 100, 2), "target_pct": cfg["target_pct"],
+            "bill_last_year": cfg["bill_last_year_same"], "last_year_month_meter": cfg.get("last_year_month_meter"),
+            "fy_prev_total": cfg["fy_prev_total"], "bill_ytd": cfg["bill_ytd"], "year_proj": round(year), **pc}

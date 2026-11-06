@@ -444,6 +444,26 @@
             </div>
             <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-wave-square mr-2 text-blue-400"></i>最近 2 小時瞬時負載</h3>
                 <p class="text-xs text-slate-400 mb-3">紅色虛線：目前時段契約上限；橘色虛線：90%</p><div class="h-64"><canvas id="rtTrend"></canvas></div></div>
+            <div id="rt-magctl" class="col-span-full glass-card p-5 border-l-4 border-l-sky-400"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-sliders mr-2 text-sky-400"></i>磁浮自動控制（出水溫度與負載上限）</h3>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div><p class="text-slate-400 text-sm">冰水出水溫度</p><p class="text-4xl font-bold text-white font-mono"><span id="rt-chws">—</span><span class="text-sm font-normal text-slate-400 ml-1">°C</span></p>
+                        <p class="text-xs text-slate-400 mt-1" id="rt-chws-sub"></p>
+                        <div class="mt-3">${rtRow('負載上限', 'rt-mlimit', '%')}${rtRow('控制模式', 'rt-mmode')}${rtRow('熱房間比例（運轉中送風機）', 'rt-mhot')}</div>
+                        <p class="text-xs mt-2 text-slate-300" id="rt-mlast"></p></div>
+                    <div class="lg:col-span-2"><p class="text-xs text-slate-400 mb-1">今天：冰水出水溫度、目標值（°C，左軸）與負載上限、壓縮機平均負載（%，右軸）</p><div class="h-56"><canvas id="rtMag"></canvas></div></div>
+                </div></div>
+            <div class="col-span-full grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="glass-card p-5 border-l-4 border-l-sky-400"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-gauge-high mr-2 text-sky-400"></i>控制狀態</h3>
+                    ${rtRow('場地活動', 'rt-event')}${rtRow('時段基準上限', 'rt-ecofloor')}${rtRow('目前負載上限', 'rt-ecolimit', '%')}
+                    <p class="text-xs text-slate-400 mt-3 mb-1">各樓層熱房間比例（運轉中送風機，室溫 ≥ 設定+1°C）</p><div id="rt-floors" class="text-sm"></div>
+                    <p class="text-xs text-slate-400 mt-3 mb-1">送風機巡檢（溫度下限 24°C、下班未申請關機）</p><div id="rt-guard" class="text-sm"></div></div>
+                <div class="glass-card p-5 border-l-4 border-l-emerald-400"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-leaf mr-2 text-emerald-400"></i>今日節電成效</h3>
+                    <div id="rt-sav" class="text-sm"></div>
+                    <p class="text-xs text-slate-500 mt-3" id="rt-sav-note"></p></div>
+                <div class="glass-card p-5 border-l-4 border-l-amber-400"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-bullseye mr-2 text-amber-400"></i>年度節電目標（帳單月）<span id="rt-tgt-pct" class="text-amber-300 ml-1"></span></h3>
+                    <div id="rt-tgt" class="text-sm"></div>
+                    <p class="text-xs text-slate-500 mt-3" id="rt-tgt-note"></p></div>
+            </div>
             <div class="col-span-full grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-fan mr-2 text-sky-400"></i>磁浮冰水主機 CHU-2</h3>
                     ${rtBar('壓縮機 1 負載', 'rt-c1pct')}${rtBar('壓縮機 2 負載', 'rt-c2pct')}
@@ -482,6 +502,13 @@
                 { label: '磁浮負載 %', data: [], borderColor: '#a78bfa', borderWidth: 2, pointRadius: 0, borderDash: [4, 3], yAxisID: 'y1' }] },
                 options: { ...opt, plugins: { legend: { display: true, labels: { boxWidth: 10 } } },
                     scales: { ...opt.scales, y: { position: 'left', title: { display: true, text: '°C' } }, y1: { position: 'right', min: 0, grid: { drawOnChartArea: false }, title: { display: true, text: '台／%' } } } } }));
+            rtCharts.push(new Chart(document.getElementById('rtMag'), { type: 'line', data: { labels: [], datasets: [
+                { label: '出水溫度', data: [], borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
+                { label: '目標', data: [], borderColor: '#34d399', borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, yAxisID: 'y' },
+                { label: '負載上限 %', data: [], borderColor: '#fbbf24', borderWidth: 2, pointRadius: 0, stepped: true, yAxisID: 'y1' },
+                { label: '壓縮機平均負載 %', data: [], borderColor: '#a78bfa', borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0, yAxisID: 'y1' }] },
+                options: { ...opt, plugins: { legend: { display: true, labels: { boxWidth: 10 } } },
+                    scales: { ...opt.scales, y: { position: 'left', title: { display: true, text: '°C' } }, y1: { position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false }, title: { display: true, text: '%' } } } } }));
             updateRT();
         }
         function rtSet(id, v) { const el = document.getElementById(id); if (el) el.innerHTML = v; }
@@ -499,7 +526,7 @@
             rtSet('rt-margin-sub', r >= 1 ? '<span class="text-red-400">推估會超約，請立即降載磁浮</span>' : r >= 0.9 ? '<span class="text-amber-300">接近契約容量（≥90%），準備降載</span>' : '<span class="text-emerald-400">安全</span>');
             rtColor(document.getElementById('rt-c2'), r); rtColor(document.getElementById('rt-c3'), r);
             rtSet('rt-peak', fmt(s.today_peak, 1)); rtSet('rt-peak-sub', s.today_peak_at ? `${s.today_peak_at} 起的 15 分鐘` : '今天還沒有完整時段');
-            const [trend, bars, acc, fcuc] = rtCharts;
+            const [trend, bars, acc, fcuc, magc] = rtCharts;
             trend.data.labels = rt.trend.map(p => p[0].slice(0, 5));
             trend.data.datasets[0].data = rt.trend.map(p => p[1]);
             trend.data.datasets[1].data = rt.trend.map(() => s.limit);
@@ -515,7 +542,9 @@
                 rtPct('rt-c1pct', a.mag_c1_pct); rtPct('rt-c2pct', a.mag_c2_pct);
                 rtSet('rt-ckw', `${fmt(a.mag_c1_kw, 1)}／${fmt(a.mag_c2_kw, 1)}`); rtSet('rt-magkw', fmt((a.mag_c1_kw || 0) + (a.mag_c2_kw || 0), 1));
                 rtSet('rt-limit', fmt(a.mag_limit_pct, 0)); rtSet('rt-chw', `${fmt(a.mag_chws_c, 1)}／${fmt(a.mag_chwr_c, 1)}`); rtSet('rt-cw', `${fmt(a.mag_cws_c, 1)}／${fmt(a.mag_cwr_c, 1)}`);
-                rtSet('rt-cop', `${fmt(a.cop, 2)}／${fmt(a.kw_per_rt, 2)}`);
+                // 正確算法：Q(kW)=流量 m³/h×1.163×(回水−出水)；RT=Q/3.517；COP=Q/冰機 kW；kW/RT=冰機 kW/RT（中控畫面的公式少除 3.517、溫差為固定值）
+                { const kwe = (a.mag_c1_kw || 0) + (a.mag_c2_kw || 0), dT = (a.mag_chwr_c ?? 0) - (a.mag_chws_c ?? 0), q = (a.flow_m3h || 0) * 1.163 * dT, rtn = q / 3.517;
+                  rtSet('rt-cop', kwe > 5 && dT > 0.5 && q > 0 ? `${fmt(q / kwe, 2)}／${fmt(kwe / rtn, 2)} <span class="text-xs text-slate-400">（${fmt(rtn, 0)} RT・溫差 ${fmt(dT, 1)}°C）</span>` : '<span class="text-slate-400">冰機未運轉</span>'); }
                 rtPct('rt-ice1', a.ice01_pct); rtPct('rt-ice2', a.ice02_pct);
                 rtSet('rt-tank', `${fmt(a.tank_out_c, 1)}／${fmt(a.tank_in_c, 1)}`); rtSet('rt-icesp', fmt(a.ice_low_sp, 0)); rtSet('rt-bcut', `${fmt(a.bcu_chws_c, 1)}／${fmt(a.bcu_chwr_c, 1)}`);
                 rtSet('rt-flow', fmt(a.flow_m3h, 1)); rtSet('rt-flowtot', fmt(a.flow_tot_m3, 0));
@@ -526,6 +555,7 @@
                 acc.data.datasets[0].data = (rt.ac_trend || []).map(p => avg([p[idx('mag_c1_pct')], p[idx('mag_c2_pct')]]));
                 acc.data.datasets[1].data = (rt.ac_trend || []).map(p => avg([p[idx('ice01_pct')], p[idx('ice02_pct')]]));
                 acc.update('none');
+                updateMagCtl(a, rt.mag, keys, idx, avg, magc);
             } else rtSet('rt-acnote', '<span class="text-amber-300">讀不到空調監控主機（\\\\10.10.2.4\\AC_Export）</span>');
             const d = liveData;
             if (d) {
@@ -534,7 +564,91 @@
                 const m = d.mag_today; rtSet('rt-magday', m ? `${fmt(m.run_hours, 1)} h・最高 ${fmt(m.max_kw, 0)} kW・${fmt(m.kwh, 0)} kWh` : '—');
                 const runs = d.ice_runs || [];
                 updateFcu(d, fcuc);
+                updateSavings(d);
                 rtSet('rt-iceruns', runs.length ? runs.map(x => `<div class="flex justify-between py-1"><span class="text-slate-300">製冰 ${x.start}–${x.end.slice(6)}</span><span class="font-mono text-white">${fmt(x.hours, 2)} h・${fmt(x.kwh, 0)} kWh</span></div>`).join('') : '<span class="text-slate-400">昨晚到現在沒有製冰</span>');
+            }
+        }
+
+        function updateMagCtl(a, m, keys, idx, avg, chart) {
+            const tgt = m && m.chws_target != null ? m.chws_target : null, chws = a.mag_chws_c;
+            const running = (a.mag_c1_pct || 0) + (a.mag_c2_pct || 0) > 0;
+            rtSet('rt-chws', fmt(chws, 1));
+            const dev = tgt != null && chws != null ? chws - tgt : null;
+            rtSet('rt-chws-sub', !running ? '冰機未運轉（水溫僅供參考）' : tgt == null ? '回水 ' + fmt(a.mag_chwr_c, 1) + ' °C' :
+                `目標 ${fmt(tgt, 1)} °C・回水 ${fmt(a.mag_chwr_c, 1)} °C・` + (dev > 1 ? '<span class="text-red-400">偏高 ' + fmt(dev, 1) + '°C</span>' : dev < -0.5 ? '<span class="text-sky-300">低於目標</span>' : '<span class="text-emerald-400">正常</span>'));
+            const card = document.getElementById('rt-magctl');
+            if (card) { card.classList.remove('border-l-sky-400', 'border-l-amber-400', 'border-l-red-500'); card.classList.add(running && dev > 1.5 ? 'border-l-red-500' : running && dev > 1 ? 'border-l-amber-400' : 'border-l-sky-400'); }
+            rtSet('rt-mlimit', fmt(a.mag_limit_pct, 0));
+            if (!m) { rtSet('rt-mmode', '<span class="text-slate-400">未啟用自動控制</span>'); rtSet('rt-mhot', '—'); rtSet('rt-mlast', ''); }
+            else {
+                const age = m.time ? (Date.now() - new Date(m.time.replace(' ', 'T') + '+08:00')) / 60000 : null;
+                const mode = age != null && age > 3 ? '<span class="text-amber-300">控制程式沒有回應（' + Math.round(age) + ' 分）</span>'
+                    : m.off ? '<span class="text-slate-300">已停用（mag_auto_off.txt）</span>' : m.enabled === false ? '<span class="text-amber-300">中控「是否啟用」未打勾</span>'
+                    : m.manual_hold ? '<span class="text-amber-300">人員接手中（暫停 60 分）</span>'
+                    : m.mode === 'LIVE' ? '<span class="text-emerald-400">自動控制中</span>' : '<span class="text-sky-300">試跑（只記錄，不寫入）</span>';
+                rtSet('rt-mmode', mode + (m.cap != null ? '・<span class="text-red-400">需量限制 ' + fmt(m.cap, 0) + '%</span>' : ''));
+                rtSet('rt-mhot', (typeof m.hot_share === 'number' ? fmt(m.hot_share * 100, 0) + '%' : '—') + '（' + (typeof m.fcu_on === 'number' ? m.fcu_on : 0) + ' 台運轉）');
+                rtSet('rt-mlast', m.last_action ? `最近調整：${m.last_action_at.slice(11, 16)} ${m.mode === 'LIVE' ? '' : '（試跑）'}${m.last_action}` : '今天還沒有調整');
+            }
+            const tr = rt.ac_trend || [], col = k => keys.includes(k) ? idx(k) : -1;
+            chart.data.labels = tr.map(p => p[0]);
+            chart.data.datasets[0].data = tr.map(p => p[col('mag_chws_c')]);
+            chart.data.datasets[1].data = tr.map(p => p[col('chws_target')] ?? null);
+            chart.data.datasets[2].data = tr.map(p => p[col('mag_limit_pct')]);
+            chart.data.datasets[3].data = tr.map(p => avg([p[idx('mag_c1_pct')], p[idx('mag_c2_pct')]]));
+            chart.update('none');
+        }
+
+        function ecoFloor(dt) {
+            const hm = dt.getHours() * 60 + dt.getMinutes(), wk = dt.getDay() >= 1 && dt.getDay() <= 5;
+            if (!wk) return '週末 30%（人員設定）';
+            if (hm >= 18 * 60 || hm < 7 * 60) return '40%（18:00 後下班時段固定）';
+            const v2 = dt >= new Date('2026-11-09T00:00:00+08:00');
+            return hm < 570 ? (v2 ? '75%' : '90%') + '（09:30 前）' : hm < 660 ? '65%（09:30–11:00）' : hm < 840 ? (v2 ? '70%' : '80%') + '（11:00–14:00）' : hm < 960 ? '60%（14:00–16:00）' : '50%（16:00–18:00）';
+        }
+        function savRow(label, x) {
+            if (!x) return '';
+            const c = x.saved >= 0 ? 'text-emerald-400' : 'text-red-400';
+            return `<div class="py-2 border-b border-slate-700/50"><div class="flex justify-between"><span class="text-slate-300">${label}</span><span class="font-mono ${c}">${x.saved >= 0 ? '省 ' : '多用 '}${fmt(Math.abs(x.saved), 0)} kWh（${x.pct == null ? '—' : fmt(Math.abs(x.pct), 1) + '%'}）</span></div>
+                <div class="text-xs text-slate-400 font-mono">今天到 ${x.upto}：${fmt(x.kwh, 0)} kWh・過去同時段平均 ${fmt(x.base, 0)} kWh・全天平均 ${fmt(x.base_day, 0)}</div></div>`;
+        }
+        function updateSavings(d) {
+            const now = new Date(), m = rt && rt.mag, a = (rt && rt.ac) || {}, g = d.fcu_guard, s = d.savings, t = d.target;
+            rtSet('rt-ecofloor', ecoFloor(now));
+            { const ev = (m && m.event) || (g && g.event) || ''; rtSet('rt-event', ev ? `<span class="text-amber-300">${ev}</span>${m && m.event_hot != null ? `・活動區熱 ${fmt(m.event_hot * 100, 0)}%` : ''}` : '<span class="text-slate-400">無</span>'); }
+            rtSet('rt-ecolimit', fmt(a.mag_limit_pct ?? (m && m.limit), 0));
+            const fl = (m && m.floors) || (d.mag_ctl && d.mag_ctl.floors) || {};
+            rtSet('rt-floors', Object.keys(fl).length ? Object.entries(fl).map(([k, v]) => { const p = (v.hot || 0) * 100, lim = k === '4F' ? 40 : 25;
+                return `<div class="py-0.5"><div class="flex justify-between"><span class="text-slate-300">${k}（${v.n} 台運轉）</span><span class="font-mono ${p >= lim ? 'text-red-400' : p >= 15 ? 'text-amber-300' : 'text-emerald-400'}">${fmt(p, 0)}%</span></div>
+                <div class="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden"><div class="h-1.5 ${p >= lim ? 'bg-red-500' : 'bg-sky-400'} rounded-full" style="width:${Math.min(100, p * 2)}%"></div></div></div>`; }).join('')
+                + '<p class="text-xs text-slate-500 mt-1">超過 25%（4 樓 40%）每 10 分鐘上限 +10%；低於 15%（4 樓 30%）才往下降</p>' : '<span class="text-slate-400">沒有樓層資料</span>');
+            if (!g) rtSet('rt-guard', '<span class="text-slate-400">讀不到 fcu_guard_status.json</span>');
+            else {
+                const acts = g.actions || [];
+                rtSet('rt-guard', `<div class="flex justify-between"><span class="text-slate-300">最近一次 ${(g.time || '').slice(11, 16)}（${g.mode === 'LIVE' ? '實際寫入' : '試跑'}）</span><span class="font-mono text-white">${g.running}／${g.units} 台運轉</span></div>
+                    <div class="flex justify-between"><span class="text-slate-300">調回 24°C／下班關機</span><span class="font-mono text-white">${g.setT_fix}／${g.after_off} 台</span></div>
+                    ${g.note ? `<div class="text-amber-300 text-xs">${g.note}</div>` : ''}
+                    ${acts.length ? `<div class="text-xs text-slate-400 mt-1 max-h-24 overflow-y-auto font-mono">${acts.slice(0, 20).join('<br>').replace(/setT25|setT_floor/g, '調回24°C').replace(/\boff\b/g, '下班關機')}</div>` : ''}`);
+            }
+            if (!s) { rtSet('rt-sav', '<span class="text-slate-400">沒有基準資料（data/savings_baseline.json）</span>'); rtSet('rt-sav-note', ''); }
+            else {
+                rtSet('rt-sav', savRow('磁浮主機 EACMP-1', s.mag) + savRow('園區總表', s.main));
+                rtSet('rt-sav-note', `比較基準：自動控制前手動操作的 ${s.base_days} 個${s.day_type === 'weekday' ? '平日' : '假日'}（10/16–11/05）同時段平均。未做天氣修正，天熱或活動多會偏高。`);
+            }
+            if (!t) { rtSet('rt-tgt', '<span class="text-slate-400">沒有目標設定（data/target.json）</span>'); rtSet('rt-tgt-note', ''); }
+            else {
+                rtSet('rt-tgt-pct', `${t.target_pct}%`);
+                const ok = t.proj_meter <= t.cap_meter, yc = t.proj_year_pct <= t.target_pct ? 'text-emerald-400' : 'text-red-400';
+                const row = (l, v) => `<div class="flex justify-between py-1 border-b border-slate-700/50"><span class="text-slate-300">${l}</span><span class="font-mono text-white">${v}</span></div>`;
+                rtSet('rt-tgt', `<p class="text-slate-400 text-xs">全年推估</p><p class="text-3xl font-bold font-mono ${yc}">${t.proj_year_pct > 0 ? '+' : ''}${fmt(t.proj_year_pct, 2)}%<span class="text-sm text-slate-400 ml-2">目標 ${t.target_pct}%</span></p>
+                    <div class="w-full h-2 bg-slate-700 rounded-full overflow-hidden my-2"><div class="h-2 ${ok ? 'bg-emerald-400' : 'bg-amber-400'} rounded-full" style="width:${Math.min(100, t.mtd_kwh / t.cap_meter * 100)}%"></div></div>
+                    ${row(`${t.month.slice(5)} 月至今（${t.days_done} 天＋今天）`, `${fmt(t.mtd_kwh, 0)} kWh`)}
+                    ${row('本月電表上限（達標）', `${fmt(t.cap_meter, 0)} kWh`)}
+                    ${row('照目前用量推估本月', `<span class="${ok ? 'text-emerald-400' : 'text-red-400'}">${fmt(t.proj_meter, 0)} kWh</span>`)}
+                    ${t.per_cap_prev ? row(`人均用電（去年 ${t.people_prev} 人→今年平均 ${fmt(t.people_avg, 0)} 人）`, `${fmt(t.per_cap_prev, 0)} → <span class="text-emerald-400">${fmt(t.per_cap_proj, 0)}</span> 度/人（${t.per_cap_pct > 0 ? '+' : ''}${fmt(t.per_cap_pct, 1)}%）`) : ''}
+                    ${row('平日平均／假日平均', `${fmt(t.avg_weekday, 0)}／${fmt(t.avg_weekend, 0)} kWh`)}
+                    ${row(`${+t.month.slice(5)} 月剩下 ${t.rem_weekdays + t.rem_weekends} 天（計入 ${+t.month.slice(5) % 12 + 1} 月帳單）每天需壓在`, t.need_per_day == null ? '—' : `<span class="${t.need_per_day < (t.avg_weekday || 0) * 0.85 ? 'text-red-400' : 'text-white'}">${fmt(t.need_per_day, 0)} kWh</span>`)}`);
+                rtSet('rt-tgt-note', `去年 FY114 全年 ${fmt(t.fy_prev_total, 0)} 度，${t.target_pct}% 後今年上限 ${fmt(t.fy_prev_total * (1 + t.target_pct / 100), 0)} 度。1–11 月帳單已用 ${fmt(t.bill_ytd, 0)} 度，12 月帳單（約 11 月用電）需 ≤ ${fmt(t.cap_bill, 0)} 度；去年同月 ${fmt(t.bill_last_year, 0)} 度。電表換算帳單 ×1.0203。`);
             }
         }
 
@@ -591,7 +705,7 @@
                 ${plantOps(d)}
             </div>
             <div class="glass-card p-5">
-                <h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-layer-group mr-2 text-amber-400"></i>各樓層配電盤</h3>
+                <h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-layer-group mr-2 text-amber-400"></i>各樓層配電盤</h3><p class="text-xs text-slate-400 -mt-2 mb-2">B1 空調主機房＝低壓總盤 ACB2-1 饋線（磁浮、泵浦、冷卻水塔）；B1 其他＝B1 一般分路</p>
                 <div class="h-64"><canvas id="liveFloors"></canvas></div>
             </div>
             <div class="glass-card p-5">
@@ -1006,8 +1120,11 @@
                 options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
                     scales: { x: { grid, ticks: { maxTicksLimit: 12 } }, y: { grid, beginAtZero: true, title: { display: true, text: 'kW' } } } }
             }));
-            const floors = lastOf(d.floors);
-            const order = ['B1', '1F', '2F', '3F', '4F'].filter(k => k in floors);
+            const floors = { ...lastOf(d.floors) };
+            const plantFl = lastOf(d.feeders)['空調主機房'];
+            if (plantFl != null) floors['B1 空調主機房'] = plantFl;
+            if ('B1' in floors) { floors['B1 其他'] = floors['B1']; delete floors['B1']; }
+            const order = ['B1 空調主機房', 'B1 其他', '1F', '2F', '3F', '4F'].filter(k => k in floors);
             liveCharts.push(new Chart(document.getElementById('liveFloors'), {
                 type: 'bar',
                 data: { labels: order, datasets: [{ label: 'kW', data: order.map(k => floors[k]), backgroundColor: '#fbbf24', borderRadius: 6 }] },
