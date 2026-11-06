@@ -123,6 +123,17 @@ function Read-Fcu {
     }
   }
   $on = 0; $hot = 0; $n = 0; $sum = 0.0; $fl = @{}
+  # 「Run」只代表有通電／連線，不代表有開機（B425 實測 2026-11-06）。真正開機 = 風速 High/Middle/Low 任一為 1。
+  $runKeys = @($u.Keys | Where-Object { $u[$_].Run -gt 0.5 })
+  if ($runKeys.Count) {
+    $ft = [string[]]@($runKeys | ForEach-Object { "$($_)_Fan_High", "$($_)_Fan_Middle", "$($_)_Fan_Low" })
+    $fv = [CticDdeW]::Read($ft, [uint32]1000, 60000)
+    for ($i = 0; $i -lt $runKeys.Count; $i++) {
+      $fan = $null
+      if ($null -ne $fv) { $a = Num $fv[3*$i]; $b = Num $fv[3*$i+1]; $c = Num $fv[3*$i+2]; if ($null -ne $a -or $null -ne $b -or $null -ne $c) { $fan = ($a -gt 0.5 -or $b -gt 0.5 -or $c -gt 0.5) } }
+      if ($fan -eq $false) { $u[$runKeys[$i]].Run = 0 }
+    }
+  }
   $ex = @(); if (Test-Path $FcuExclude) { $ex = @(Get-Content $FcuExclude -Encoding UTF8 | ForEach-Object { ($_ -split '#')[0].Trim() } | Where-Object { $_ }) }
   foreach ($k in $u.Keys) {
     $skip = $false; foreach ($e in $ex) { if ($k.StartsWith($e)) { $skip = $true; break } }
