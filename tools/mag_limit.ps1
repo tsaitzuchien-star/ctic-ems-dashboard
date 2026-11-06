@@ -1,8 +1,10 @@
 ﻿# 中創園區 磁浮冰機 CHU-2 負載限制 寫入工具 (mag_limit.ps1)
-# 只寫三個標籤：負載限制百分比 SG_CHU2_Item40035，以及冰水出水溫度設定 1、2（SG_CHU2_Item40001/40003）。
+# 只寫這些標籤：負載限制百分比 SG_CHU2_Item40035、限制啟用時間 SG_CHU2_Item40035_TIME_SET1_H/_M，
+# 以及冰水出水溫度設定 1、2（SG_CHU2_Item40001/40003）。
+# 負載限制要到「啟用時間」那一分鐘才會送到主機（監控廠商 2026-11-06），所以 -Set 會把啟用時間設成下一分鐘。
 # 用法（空調監控主機，InTouch WindowViewer 要開著）：
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1            # 只讀目前狀態
-#   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Set 85    # 寫入 85%，讀回確認
+#   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Set 85    # 寫入 85%，啟用時間設為下一分鐘，讀回確認
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Sp 12.5   # 冰水出水溫度設定 1、2 寫入 12.5°C（只允許 10–14），讀回確認
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Tags A,B   # 只讀任意標籤（不寫入）
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Test      # 原值-5%，觀察 60 秒，寫回原值
@@ -69,8 +71,8 @@ if ($Tags) {   # 只讀，不寫入
   exit 0
 }
 
-$names = 'sp1','sp2','enabled','limit_pct','chu2_st','c1_pct','c2_pct','c1_kw','c2_kw','chws_c','chwr_c'
-$tags  = [string[]]@('SG_CHU2_Item40001','SG_CHU2_Item40003','SG_CHU2_Item40035_SCH_ONOFF',$Tag,'SGB1DC51_CHU2_ST','SG_CHU2_Item30049','SG_CHU2_Item30051','SG_CHU2_Item30041','SG_CHU2_Item30043','SG_CHU2_Item30001','SG_CHU2_Item30003')
+$names = 'sp1','sp2','enabled','start_h','start_m','stop_h','stop_m','limit_pct','chu2_st','c1_pct','c2_pct','c1_kw','c2_kw','chws_c','chwr_c'
+$tags  = [string[]]@('SG_CHU2_Item40001','SG_CHU2_Item40003','SG_CHU2_Item40035_SCH_ONOFF','SG_CHU2_Item40035_TIME_SET1_H','SG_CHU2_Item40035_TIME_SET1_M','SG_CHU2_Item40035_TIME_SET2_H','SG_CHU2_Item40035_TIME_SET2_M',$Tag,'SGB1DC51_CHU2_ST','SG_CHU2_Item30049','SG_CHU2_Item30051','SG_CHU2_Item30041','SG_CHU2_Item30043','SG_CHU2_Item30001','SG_CHU2_Item30003')
 function Snap {
   $v = [CticDdeW]::Read($tags)
   if ($null -eq $v) { throw 'DDE 連不上 InTouch（WindowViewer 有開嗎？）' }
@@ -78,13 +80,24 @@ function Snap {
   for ($i=0; $i -lt $names.Count; $i++) { $h[$names[$i]] = $v[$i] }
   return [pscustomobject]$h
 }
+# 把「啟用時間」設成下一分鐘（剩不到 10 秒就設下下分鐘），讓主機在那一分鐘套用新的上限。
+function Trigger-Limit {
+  $n = Get-Date
+  $t = $n.AddMinutes($(if ($n.Second -ge 50) { 2 } else { 1 }))
+  $s = Snap
+  if ("$($s.stop_h)" -ne '' -and [int][double]$s.stop_h -eq $t.Hour -and [int][double]$s.stop_m -eq $t.Minute) { $t = $t.AddMinutes(1) }
+  $okH = [CticDdeW]::Poke('SG_CHU2_Item40035_TIME_SET1_H', "$($t.Hour)")
+  $okM = [CticDdeW]::Poke('SG_CHU2_Item40035_TIME_SET1_M', "$($t.Minute)")
+  return ('{0:HH:mm}' -f $t) + " ok=$okH/$okM"
+}
 function Write-Limit([double]$p, [string]$why) {
   if ($p -lt $Min -or $p -gt $Max) { throw "拒絕寫入 $p%（只允許 $Min–$Max%）" }
   $before = (Snap).limit_pct
   $ok = [CticDdeW]::Poke($Tag, $p.ToString([Globalization.CultureInfo]::InvariantCulture))
+  $trig = Trigger-Limit
   Start-Sleep -Seconds 2
   $after = (Snap).limit_pct
-  $line = "$(Get-Date -f s) $why set=$p before=$before after=$after poke_ok=$ok"
+  $line = "$(Get-Date -f s) $why set=$p before=$before after=$after poke_ok=$ok start=$trig"
   $line | Out-File $Log -Append -Encoding utf8
   Write-Host $line
   return $after

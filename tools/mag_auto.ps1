@@ -1,5 +1,6 @@
 ﻿# 中創園區 磁浮冰機 CHU-2 自動控制 (mag_auto.ps1) — 裝在空調監控主機
-# 寫入的只有三個點（Cliff 授權）：負載限制百分比 SG_CHU2_Item40035、冰水出水溫度設定 1/2 SG_CHU2_Item40001/40003。
+# 寫入的點（Cliff 授權）：負載限制百分比 SG_CHU2_Item40035 與其啟用時間 TIME_SET1_H/_M、冰水出水溫度設定 1/2 SG_CHU2_Item40001/40003。
+# 負載限制要到「啟用時間」那一分鐘才會送到主機，所以每次改上限都把啟用時間設成下一分鐘。
 # 不開關機、不改其他設定。
 # 兩層控制：
 #  1) 契約需量（最優先，每 10 秒）：向監控電腦 http://10.10.2.20:8088/api/live 取 15 分鐘需量推估（台電基準），
@@ -185,8 +186,12 @@ function Write-Limit([double]$p, [string]$why) {
   $script:lastAction = "$why -> $p%"; $script:lastActionAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
   if ($Live) {
     $ok = [CticDdeW]::Poke($Tag, $p.ToString($inv))
+    $n = Get-Date; $t = $n.AddMinutes($(if ($n.Second -ge 50) { 2 } else { 1 }))
+    if ($t.Hour -eq 22 -and $t.Minute -eq 0) { $t = $t.AddMinutes(1) }   # 啟用時間不能等於停用時間 22:00
+    $okH = [CticDdeW]::Poke('SG_CHU2_Item40035_TIME_SET1_H', "$($t.Hour)")
+    $okM = [CticDdeW]::Poke('SG_CHU2_Item40035_TIME_SET1_M', "$($t.Minute)")
     $script:lastWrite = $p
-    return "$why->$p poke=$ok"
+    return "$why->$p poke=$ok start=$('{0:HH:mm}' -f $t) ok=$okH/$okM"
   }
   $script:sim = $p
   return "WOULD $why->$p"
