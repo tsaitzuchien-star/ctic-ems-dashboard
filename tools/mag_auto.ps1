@@ -21,6 +21,7 @@ $Tag  = 'SG_CHU2_Item40035'
 $Api  = 'http://10.10.2.20:8088/api/live'
 $Off  = Join-Path $Out 'mag_auto_off.txt'
 $FcuList = Join-Path $Out 'fcu_tags.txt'
+$FcuExclude = Join-Path $Out 'fcu_exclude.txt'   # 不列入熱房間判斷的送風機（空房、未進駐），一行一個標籤開頭，例如 SG_4F31_P32
 $SpTags = @('SG_CHU2_Item40001', 'SG_CHU2_Item40003')   # 冰水出水溫度設定 1、2
 
 # ---- 參數 ----
@@ -122,7 +123,10 @@ function Read-Fcu {
     }
   }
   $on = 0; $hot = 0; $n = 0; $sum = 0.0; $fl = @{}
+  $ex = @(); if (Test-Path $FcuExclude) { $ex = @(Get-Content $FcuExclude -Encoding UTF8 | ForEach-Object { ($_ -split '#')[0].Trim() } | Where-Object { $_ }) }
   foreach ($k in $u.Keys) {
+    $skip = $false; foreach ($e in $ex) { if ($k.StartsWith($e)) { $skip = $true; break } }
+    if ($skip) { continue }
     $f = $u[$k]
     if ($f.Run -gt 0.5) {
       $on++
