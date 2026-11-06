@@ -1,0 +1,19 @@
+{
+ "note": "台電帳單月目標（Cliff 2026-11-06：老闆目標 -2.1%）。帳單用電月份約晚一個月：12 月帳單≈11 月用電。",
+ "fy_prev_total": 1889800,
+ "target_pct": -2.1,
+ "bill_ytd": 1722600,
+ "bill_ytd_months": "帳單 1–11 月",
+ "bill_last_year_same": 143400,
+ "bill_per_meter": 1.0203,
+ "month": "2026-11",
+ "known_days": {
+  "2026-11-01": 3241,
+  "2026-11-02": 5762,
+  "2026-11-03": 5840,
+  "2026-11-04": 5637,
+  "2026-11-05": 5539
+ },
+ "known_source": "InTouch 歷史 F0_B2P2_MCB_KWH（11/5 前 Circuit 檔還沒有）",
+ "last_year_month_meter": 140549
+}

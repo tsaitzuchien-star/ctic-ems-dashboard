@@ -453,6 +453,18 @@
                     <div class="lg:col-span-2"><p class="text-xs text-slate-400 mb-1">今天：冰水出水溫度、目標值（°C，左軸）與負載上限、壓縮機平均負載（%，右軸）</p><div class="h-56"><canvas id="rtMag"></canvas></div></div>
                 </div></div>
             <div class="col-span-full grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="glass-card p-5 border-l-4 border-l-sky-400"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-gauge-high mr-2 text-sky-400"></i>控制狀態</h3>
+                    ${rtRow('時段基準上限', 'rt-ecofloor')}${rtRow('目前負載上限', 'rt-ecolimit', '%')}
+                    <p class="text-xs text-slate-400 mt-3 mb-1">各樓層熱房間比例（運轉中送風機，室溫 ≥ 設定+1°C）</p><div id="rt-floors" class="text-sm"></div>
+                    <p class="text-xs text-slate-400 mt-3 mb-1">送風機巡檢（溫度下限 24°C、下班未申請關機）</p><div id="rt-guard" class="text-sm"></div></div>
+                <div class="glass-card p-5 border-l-4 border-l-emerald-400"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-leaf mr-2 text-emerald-400"></i>今日節電成效</h3>
+                    <div id="rt-sav" class="text-sm"></div>
+                    <p class="text-xs text-slate-500 mt-3" id="rt-sav-note"></p></div>
+                <div class="glass-card p-5 border-l-4 border-l-amber-400"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-bullseye mr-2 text-amber-400"></i>年度節電 −2.1% 目標（帳單月）</h3>
+                    <div id="rt-tgt" class="text-sm"></div>
+                    <p class="text-xs text-slate-500 mt-3" id="rt-tgt-note"></p></div>
+            </div>
+            <div class="col-span-full grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-fan mr-2 text-sky-400"></i>磁浮冰水主機 CHU-2</h3>
                     ${rtBar('壓縮機 1 負載', 'rt-c1pct')}${rtBar('壓縮機 2 負載', 'rt-c2pct')}
                     ${rtRow('壓縮機 1／2 功率', 'rt-ckw', 'kW')}${rtRow('合計功率', 'rt-magkw', 'kW')}${rtRow('負載限制', 'rt-limit', '%')}
@@ -552,6 +564,7 @@
                 const m = d.mag_today; rtSet('rt-magday', m ? `${fmt(m.run_hours, 1)} h・最高 ${fmt(m.max_kw, 0)} kW・${fmt(m.kwh, 0)} kWh` : '—');
                 const runs = d.ice_runs || [];
                 updateFcu(d, fcuc);
+                updateSavings(d);
                 rtSet('rt-iceruns', runs.length ? runs.map(x => `<div class="flex justify-between py-1"><span class="text-slate-300">製冰 ${x.start}–${x.end.slice(6)}</span><span class="font-mono text-white">${fmt(x.hours, 2)} h・${fmt(x.kwh, 0)} kWh</span></div>`).join('') : '<span class="text-slate-400">昨晚到現在沒有製冰</span>');
             }
         }
@@ -584,6 +597,55 @@
             chart.data.datasets[2].data = tr.map(p => p[col('mag_limit_pct')]);
             chart.data.datasets[3].data = tr.map(p => avg([p[idx('mag_c1_pct')], p[idx('mag_c2_pct')]]));
             chart.update('none');
+        }
+
+        function ecoFloor(dt) {
+            const hm = dt.getHours() * 60 + dt.getMinutes(), wk = dt.getDay() >= 1 && dt.getDay() <= 5;
+            if (!wk) return '週末 30%（人員設定）';
+            if (hm >= 18 * 60 || hm < 7 * 60) return '40%（18:00 後下班時段固定）';
+            return hm < 570 ? '90%（09:30 前）' : hm < 660 ? '65%（09:30–11:00）' : hm < 840 ? '80%（11:00–14:00）' : hm < 960 ? '60%（14:00–16:00）' : '50%（16:00–18:00）';
+        }
+        function savRow(label, x) {
+            if (!x) return '';
+            const c = x.saved >= 0 ? 'text-emerald-400' : 'text-red-400';
+            return `<div class="py-2 border-b border-slate-700/50"><div class="flex justify-between"><span class="text-slate-300">${label}</span><span class="font-mono ${c}">${x.saved >= 0 ? '省 ' : '多用 '}${fmt(Math.abs(x.saved), 0)} kWh（${x.pct == null ? '—' : fmt(Math.abs(x.pct), 1) + '%'}）</span></div>
+                <div class="text-xs text-slate-400 font-mono">今天到 ${x.upto}：${fmt(x.kwh, 0)} kWh・過去同時段平均 ${fmt(x.base, 0)} kWh・全天平均 ${fmt(x.base_day, 0)}</div></div>`;
+        }
+        function updateSavings(d) {
+            const now = new Date(), m = rt && rt.mag, a = (rt && rt.ac) || {}, g = d.fcu_guard, s = d.savings, t = d.target;
+            rtSet('rt-ecofloor', ecoFloor(now));
+            rtSet('rt-ecolimit', fmt(a.mag_limit_pct ?? (m && m.limit), 0));
+            const fl = (m && m.floors) || (d.mag_ctl && d.mag_ctl.floors) || {};
+            rtSet('rt-floors', Object.keys(fl).length ? Object.entries(fl).map(([k, v]) => { const p = (v.hot || 0) * 100, lim = k === '4F' ? 40 : 25;
+                return `<div class="py-0.5"><div class="flex justify-between"><span class="text-slate-300">${k}（${v.n} 台運轉）</span><span class="font-mono ${p >= lim ? 'text-red-400' : p >= 15 ? 'text-amber-300' : 'text-emerald-400'}">${fmt(p, 0)}%</span></div>
+                <div class="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden"><div class="h-1.5 ${p >= lim ? 'bg-red-500' : 'bg-sky-400'} rounded-full" style="width:${Math.min(100, p * 2)}%"></div></div></div>`; }).join('')
+                + '<p class="text-xs text-slate-500 mt-1">超過 25%（4 樓 40%）每 10 分鐘上限 +10%；低於 15%（4 樓 30%）才往下降</p>' : '<span class="text-slate-400">沒有樓層資料</span>');
+            if (!g) rtSet('rt-guard', '<span class="text-slate-400">讀不到 fcu_guard_status.json</span>');
+            else {
+                const acts = g.actions || [];
+                rtSet('rt-guard', `<div class="flex justify-between"><span class="text-slate-300">最近一次 ${(g.time || '').slice(11, 16)}（${g.mode === 'LIVE' ? '實際寫入' : '試跑'}）</span><span class="font-mono text-white">${g.running}／${g.units} 台運轉</span></div>
+                    <div class="flex justify-between"><span class="text-slate-300">調回 24°C／下班關機</span><span class="font-mono text-white">${g.setT_fix}／${g.after_off} 台</span></div>
+                    ${g.note ? `<div class="text-amber-300 text-xs">${g.note}</div>` : ''}
+                    ${acts.length ? `<div class="text-xs text-slate-400 mt-1 max-h-24 overflow-y-auto font-mono">${acts.slice(0, 20).join('<br>')}</div>` : ''}`);
+            }
+            if (!s) { rtSet('rt-sav', '<span class="text-slate-400">沒有基準資料（data/savings_baseline.json）</span>'); rtSet('rt-sav-note', ''); }
+            else {
+                rtSet('rt-sav', savRow('磁浮主機 EACMP-1', s.mag) + savRow('園區總表', s.main));
+                rtSet('rt-sav-note', `比較基準：自動控制前手動操作的 ${s.base_days} 個${s.day_type === 'weekday' ? '平日' : '假日'}（10/16–11/05）同時段平均。未做天氣修正，天熱或活動多會偏高。`);
+            }
+            if (!t) { rtSet('rt-tgt', '<span class="text-slate-400">沒有目標設定（data/target.json）</span>'); rtSet('rt-tgt-note', ''); }
+            else {
+                const ok = t.proj_meter <= t.cap_meter, yc = t.proj_year_pct <= t.target_pct ? 'text-emerald-400' : 'text-red-400';
+                const row = (l, v) => `<div class="flex justify-between py-1 border-b border-slate-700/50"><span class="text-slate-300">${l}</span><span class="font-mono text-white">${v}</span></div>`;
+                rtSet('rt-tgt', `<p class="text-slate-400 text-xs">全年推估</p><p class="text-3xl font-bold font-mono ${yc}">${t.proj_year_pct > 0 ? '+' : ''}${fmt(t.proj_year_pct, 2)}%<span class="text-sm text-slate-400 ml-2">目標 ${t.target_pct}%</span></p>
+                    <div class="w-full h-2 bg-slate-700 rounded-full overflow-hidden my-2"><div class="h-2 ${ok ? 'bg-emerald-400' : 'bg-amber-400'} rounded-full" style="width:${Math.min(100, t.mtd_kwh / t.cap_meter * 100)}%"></div></div>
+                    ${row(`${t.month.slice(5)} 月至今（${t.days_done} 天＋今天）`, `${fmt(t.mtd_kwh, 0)} kWh`)}
+                    ${row('本月電表上限（達標）', `${fmt(t.cap_meter, 0)} kWh`)}
+                    ${row('照目前用量推估本月', `<span class="${ok ? 'text-emerald-400' : 'text-red-400'}">${fmt(t.proj_meter, 0)} kWh</span>`)}
+                    ${row('平日平均／假日平均', `${fmt(t.avg_weekday, 0)}／${fmt(t.avg_weekend, 0)} kWh`)}
+                    ${row(`剩下 ${t.rem_weekdays + t.rem_weekends} 天每天需壓在`, t.need_per_day == null ? '—' : `<span class="${t.need_per_day < (t.avg_weekday || 0) * 0.85 ? 'text-red-400' : 'text-white'}">${fmt(t.need_per_day, 0)} kWh</span>`)}`);
+                rtSet('rt-tgt-note', `去年 FY114 全年 1,889,800 度，−2.1% 後今年上限 1,850,114 度。1–11 月帳單已用 1,722,600 度，12 月帳單（約 11 月用電）需 ≤ ${fmt(t.cap_bill, 0)} 度；去年同月 ${fmt(t.bill_last_year, 0)} 度。電表換算帳單 ×1.0203。`);
+            }
         }
 
         function updateFcu(d, chart) {
@@ -639,7 +701,7 @@
                 ${plantOps(d)}
             </div>
             <div class="glass-card p-5">
-                <h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-layer-group mr-2 text-amber-400"></i>各樓層配電盤</h3>
+                <h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-layer-group mr-2 text-amber-400"></i>各樓層配電盤</h3><p class="text-xs text-slate-400 -mt-2 mb-2">B1 空調主機房＝低壓總盤 ACB2-1 饋線（磁浮、泵浦、冷卻水塔）；B1 其他＝B1 一般分路</p>
                 <div class="h-64"><canvas id="liveFloors"></canvas></div>
             </div>
             <div class="glass-card p-5">
@@ -1054,8 +1116,11 @@
                 options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
                     scales: { x: { grid, ticks: { maxTicksLimit: 12 } }, y: { grid, beginAtZero: true, title: { display: true, text: 'kW' } } } }
             }));
-            const floors = lastOf(d.floors);
-            const order = ['B1', '1F', '2F', '3F', '4F'].filter(k => k in floors);
+            const floors = { ...lastOf(d.floors) };
+            const plantFl = lastOf(d.feeders)['空調主機房'];
+            if (plantFl != null) floors['B1 空調主機房'] = plantFl;
+            if ('B1' in floors) { floors['B1 其他'] = floors['B1']; delete floors['B1']; }
+            const order = ['B1 空調主機房', 'B1 其他', '1F', '2F', '3F', '4F'].filter(k => k in floors);
             liveCharts.push(new Chart(document.getElementById('liveFloors'), {
                 type: 'bar',
                 data: { labels: order, datasets: [{ label: 'kW', data: order.map(k => floors[k]), backgroundColor: '#fbbf24', borderRadius: 6 }] },

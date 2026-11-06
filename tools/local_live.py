@@ -36,6 +36,7 @@ TAIPOWER_OFFSET = 10.0          # 台電電表比 BMS 高約 10 kW（2026-11 對
 AC_SHARE = r"\\10.10.2.4\AC_Export"
 AC_JSON = os.path.join(AC_SHARE, "ac_latest.json")
 MAG_JSON = os.path.join(AC_SHARE, "mag_auto_status.json")   # 磁浮自動控制 mag_auto.ps1 的狀態
+GUARD_JSON = os.path.join(AC_SHARE, "fcu_guard_status.json")   # 送風機巡檢 fcu_guard.ps1 的狀態
 SAMPLE_S = 5
 HISTORY = 2 * 3600 // SAMPLE_S  # 網頁趨勢圖保留 2 小時
 SITE_DIR = os.path.join(HERE, "site")
@@ -237,6 +238,25 @@ def read_mag():
         return None
 
 
+def read_guard():
+    try:
+        with open(GUARD_JSON, encoding="utf-8-sig") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def load_site_json(name):
+    """網站資料夾 site\\data\\name（沒有就找本程式旁邊），讀不到回傳 None。"""
+    for p in (os.path.join(SITE_DIR, "data", name), os.path.join(HERE, name)):
+        try:
+            with open(p, encoding="utf-8-sig") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 # ---------------- 需量預測（只有這一項來自雲端：預測系統在 GitHub 上每天 17:47 計算） ----------------
 FORECAST_URL = "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/live.json"
 FORECAST = {"day": None, "data": None, "at": 0.0}
@@ -283,6 +303,7 @@ class Circuits:
         self.csv_rows = {}                    # 檔名 -> (mtime, rows)
         self.own = {}                         # 15 分鐘時段 -> (實際讀取時間, 讀值)（本程式自己讀的）
         self.month_first = {}                 # "YYYY-MM" -> 本月第一列讀值
+        self.day_first = {}                   # Circuit 檔路徑 -> 第一列 (時間, 讀值)
         self.live = None                      # (時間, 讀值)
         self.recent = deque(maxlen=20)        # 最近 20 次（每分鐘）讀值，算滾動 15 分鐘 kW
 
@@ -340,6 +361,43 @@ class Circuits:
         self.month_first[key] = first
         return first
 
+    def month_daily(self, now, known=None):
+        """本月每天總表 kWh：known（雲端歷史補的）優先，其餘用每天 Circuit 檔第一列的累積度數相減，今天用即時讀值。"""
+        key = f"{now:%Y-%m}"
+        firsts = {}
+        if self.out_dir:
+            for n in sorted(os.listdir(self.out_dir)):
+                if not (n.startswith(f"Circuit_{key}-") and n.endswith(".csv")):
+                    continue
+                day = n[8:18]
+                path = os.path.join(self.out_dir, n)
+                hit = self.day_first.get(path)
+                if hit is None:
+                    with open(path, encoding="utf-8-sig") as f:
+                        rows = ems_calc.parse_wide(f.readline() + f.readline())
+                    hit = rows[0] if rows else None
+                    if hit is not None:
+                        self.day_first[path] = hit
+                if hit and ems_calc.MAIN_KWH in hit[1]:
+                    firsts[day] = (hit[0], hit[1][ems_calc.MAIN_KWH])
+        out = dict(known or {})
+        days = sorted(firsts)
+        for i, d in enumerate(days):
+            if d in out:
+                continue
+            t0, v0 = firsts[d]
+            if t0.hour > 0 or t0.minute > 20:          # 這天的檔不是從午夜開始（例如 11/5 14:00 才開始），不算
+                continue
+            if i + 1 < len(days):
+                v1 = firsts[days[i + 1]][1]
+            elif d == now.date().isoformat() and self.live and ems_calc.MAIN_KWH in self.live[1]:
+                v1 = self.live[1][ems_calc.MAIN_KWH]
+            else:
+                continue
+            if 0 <= v1 - v0 < 20000:
+                out[d] = round(v1 - v0, 1)
+        return out
+
     def rows(self, now):
         """昨天＋今天的 15 分鐘整點讀值，CSV 優先，缺的用本程式自己讀的補。"""
         merged = dict(self._csv(now.date() - dt.timedelta(days=1)) + self._csv(now.date()))
@@ -360,6 +418,15 @@ class Circuits:
         data["pv"] = FORECAST.get("pv") if FORECAST.get("pv_day") == now.date().isoformat() else None
         fcu, fcu_rooms = read_fcu(now)
         data["fcu"] = fcu
+        try:                                   # 節電成效、-2.1% 目標、控制程式狀態（2026-11-06）
+            today_raw = [(t, kw) for t, kw in ems_calc.intervals(rows) if t.date() == now.date()]
+            data["savings"] = ems_calc.savings(today_raw, now, load_site_json("savings_baseline.json"))
+            tcfg = load_site_json("target.json")
+            data["target"] = ems_calc.target_status(self.month_daily(now, (tcfg or {}).get("known_days")), now, tcfg)
+            data["mag_ctl"] = read_mag()
+            data["fcu_guard"] = read_guard()
+        except Exception as e:
+            log(f"節電成效計算失敗：{type(e).__name__}: {e}")
         # 房間卡片：kW 用最近 15 分鐘滾動（今天最後一列換成即時讀值，前一列換成約 15 分鐘前的讀值）
         room_rows = rows
         if self.live:
