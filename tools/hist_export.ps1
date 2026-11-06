@@ -17,7 +17,8 @@ param(
   [string]$DbDir = '',                # InTouch 應用程式資料夾（有 tagname.x 的地方；HistData 的 DBDir）；空白＝自動找
   [int]$TimeoutS = 300,
   [switch]$Probe,
-  [switch]$Diag
+  [switch]$Diag,
+  [switch]$Merge                      # 把每天的檔合併成一個含時間欄的 CSV，放到 Google 雲端 BMS自動匯出
 )
 $ErrorActionPreference = 'Stop'
 
@@ -78,6 +79,38 @@ function Find-DbDir {
   if (-not $hits.Count) { throw '找不到 tagname.x，請用 -DbDir 指定 InTouch 應用程式資料夾' }
   $hits[0].DirectoryName | Out-File $cache -Encoding utf8
   return $hits[0].DirectoryName
+}
+
+if ($Merge) {
+  $drive = $null
+  foreach ($r in (Get-PSDrive -PSProvider FileSystem | % Root)) {
+    foreach ($sub in '我的雲端硬碟', 'My Drive') {
+      $base = Join-Path $r $sub
+      if (Test-Path $base) { $hit = Get-ChildItem $base -Directory -Filter 'BMS*' | Select-Object -First 1; if ($hit) { $drive = $hit.FullName; break } }
+    }
+    if ($drive) { break }
+  }
+  if (-not $drive) { throw '找不到 Google 雲端的 BMS自動匯出 資料夾' }
+  $step = [int]($Interval -replace '[^0-9]', ''); if ($Interval -match 'h$') { $step *= 60 }
+  $files = @(Get-ChildItem $Out -Filter "$($Prefix)_*.csv" | Sort-Object Name)
+  if (-not $files.Count) { throw "沒有 $Prefix 的日檔" }
+  $first = $files[0].BaseName.Substring($Prefix.Length + 1); $last = $files[-1].BaseName.Substring($Prefix.Length + 1)
+  $dest = Join-Path $drive ("hist_{0}_{1}_{2}.csv" -f $Prefix, $first, $last)
+  $sb = New-Object System.Text.StringBuilder
+  $perDay = [int](1440 / $step)
+  $hdr = $false
+  foreach ($f in $files) {
+    $day = [datetime]::ParseExact($f.BaseName.Substring($Prefix.Length + 1), 'yyyy-MM-dd', $null)
+    $lines = @(Get-Content $f.FullName)
+    if ($lines.Count -lt 2) { continue }
+    if (-not $hdr) { [void]$sb.AppendLine('time,' + $lines[0]); $hdr = $true }
+    for ($i = 1; $i -lt [math]::Min($lines.Count, $perDay + 1); $i++) {
+      [void]$sb.AppendLine(('{0:yyyy-MM-dd HH:mm},' -f $day.AddMinutes(($i - 1) * $step)) + $lines[$i])
+    }
+  }
+  [IO.File]::WriteAllText($dest, $sb.ToString(), [Text.Encoding]::ASCII)
+  "合併 $($files.Count) 天 → $dest（$([math]::Round((Get-Item $dest).Length/1MB,1)) MB）"
+  return
 }
 
 Ensure-HistData
