@@ -205,12 +205,14 @@ function Read-Demand {
 
 function Is-Summer($t) { $md = $t.Month * 100 + $t.Day; return ($md -ge 516 -and $md -le 1015) }
 function Is-Eco($t) { return ($t -lt $ECO_UNTIL -and -not (Test-Path $EcoOff) -and $t.DayOfWeek -ne 'Saturday' -and $t.DayOfWeek -ne 'Sunday') }
+$ECO_V2_FROM = [datetime]'2026-11-09'
 # 平日時段基準（Cliff 2026-11-06 15:35 同意）：上限的「底」，熱房間多再往上加（最多 100%）
 function Eco-Floor($t) {
   $h = $t.ToString('HH:mm')
-  if ($h -lt '09:30') { return 90 }    # 早上剛上班最悶
+  $v2 = $t -ge $ECO_V2_FROM            # 11/9 起早上與中午再降（Cliff 2026-11-06 15:54 同意）
+  if ($h -lt '09:30') { if ($v2) { return 75 } else { return 90 } }    # 早上剛上班最悶
   if ($h -lt '11:00') { return 65 }
-  if ($h -lt '14:00') { return 80 }    # 餐廳營業、外氣最熱
+  if ($h -lt '14:00') { if ($v2) { return 70 } else { return 80 } }    # 餐廳營業、外氣最熱
   if ($h -lt '16:00') { return 60 }
   return 50                            # 16:00–18:00；18:00 後另有固定 40%
 }

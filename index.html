@@ -603,7 +603,8 @@
             const hm = dt.getHours() * 60 + dt.getMinutes(), wk = dt.getDay() >= 1 && dt.getDay() <= 5;
             if (!wk) return '週末 30%（人員設定）';
             if (hm >= 18 * 60 || hm < 7 * 60) return '40%（18:00 後下班時段固定）';
-            return hm < 570 ? '90%（09:30 前）' : hm < 660 ? '65%（09:30–11:00）' : hm < 840 ? '80%（11:00–14:00）' : hm < 960 ? '60%（14:00–16:00）' : '50%（16:00–18:00）';
+            const v2 = dt >= new Date('2026-11-09T00:00:00+08:00');
+            return hm < 570 ? (v2 ? '75%' : '90%') + '（09:30 前）' : hm < 660 ? '65%（09:30–11:00）' : hm < 840 ? (v2 ? '70%' : '80%') + '（11:00–14:00）' : hm < 960 ? '60%（14:00–16:00）' : '50%（16:00–18:00）';
         }
         function savRow(label, x) {
             if (!x) return '';
@@ -626,7 +627,7 @@
                 rtSet('rt-guard', `<div class="flex justify-between"><span class="text-slate-300">最近一次 ${(g.time || '').slice(11, 16)}（${g.mode === 'LIVE' ? '實際寫入' : '試跑'}）</span><span class="font-mono text-white">${g.running}／${g.units} 台運轉</span></div>
                     <div class="flex justify-between"><span class="text-slate-300">調回 24°C／下班關機</span><span class="font-mono text-white">${g.setT_fix}／${g.after_off} 台</span></div>
                     ${g.note ? `<div class="text-amber-300 text-xs">${g.note}</div>` : ''}
-                    ${acts.length ? `<div class="text-xs text-slate-400 mt-1 max-h-24 overflow-y-auto font-mono">${acts.slice(0, 20).join('<br>')}</div>` : ''}`);
+                    ${acts.length ? `<div class="text-xs text-slate-400 mt-1 max-h-24 overflow-y-auto font-mono">${acts.slice(0, 20).join('<br>').replace(/setT25|setT_floor/g, '調回24°C').replace(/\boff\b/g, '下班關機')}</div>` : ''}`);
             }
             if (!s) { rtSet('rt-sav', '<span class="text-slate-400">沒有基準資料（data/savings_baseline.json）</span>'); rtSet('rt-sav-note', ''); }
             else {

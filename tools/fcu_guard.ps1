@@ -138,7 +138,7 @@ for ($i = 0; $i -lt $units.Count; $i++) {
   $status.running++
   $act = $null; $tag = $null; $val = $null; $before = $null
   if ($after -and -not (Allowed $u)) { $act = 'off'; $tag = "$($u)_Run"; $val = '0'; $before = "Run=1 setT=$st" }
-  elseif (-not $NoSetT -and $null -ne $st -and $st -gt 5 -and $st -lt $SET_MIN - 0.05) { $act = 'setT25'; $tag = "$($u)_setT"; $val = $SET_MIN.ToString($inv); $before = "setT=$st" }
+  elseif (-not $NoSetT -and $null -ne $st -and $st -gt 5 -and $st -lt $SET_MIN - 0.05) { $act = 'setT_floor'; $tag = "$($u)_setT"; $val = $SET_MIN.ToString($inv); $before = "setT=$st" }
   if (-not $act) { continue }
   if ($writes -ge $MAX_WRITES) { $status.note = "max-writes $MAX_WRITES"; break }
   $ok = ''
