@@ -45,6 +45,7 @@ $MANUAL_HOLD_S = 3600
 $ECO_UNTIL = [datetime]'2026-12-01'; $EcoOff = Join-Path $Out 'mag_eco_off.txt'
 $ECO_BASE = 65; $ECO_STEP = 10; $ECO_STEP_S = 600
 $ECO_HOT_UP = 0.25; $ECO_HOT_DN = 0.15; $ECO_4F_UP = 0.40; $ECO_4F_OK = 0.30   # 上限：非 4 樓最熱樓層 ≥ 25%（或 4 樓 ≥ 40%）就加；< 15%（4 樓 < 30%）才減
+$AFTER_START = '18:00'; $AFTER_LIMIT = 40   # 園區供應 07:30–18:00，之後是申請付費的加班空調，上限固定 40%（Cliff 2026-11-06）
 $ECO_SP_DN = 0.30; $ECO_4F_SP_DN = 0.45                                         # 出水：熱房間 ≥ 30%（4 樓 ≥ 45%）才降
 
 $mtx = New-Object System.Threading.Mutex($false, 'Global\CTIC_Mag_Auto')
@@ -212,7 +213,7 @@ $base = $null                # 沒有需量保護時的負載上限（人員設�
 $spSim = $null; $spLastWrite = $null; $lastSpStep = [datetime]::MinValue; $spWant = $null
 $cap = $null                 # 需量保護上限（null = 沒有在限制）
 $lastWrite = $null
-$lastDStep = [datetime]::MinValue; $lastCStep = [datetime]::MinValue; $lastBoost = [datetime]::MinValue; $lastEco = [datetime]::MinValue
+$lastDStep = [datetime]::MinValue; $lastCStep = [datetime]::MinValue; $lastBoost = [datetime]::MinValue; $lastEco = [datetime]::MinValue; $afterSet = $false
 $clearSince = $null; $lostSince = $null; $manualUntil = [datetime]::MinValue
 $fcu = $null; $fcuAt = [datetime]::MinValue
 $lastAction = ''; $lastActionAt = ''
@@ -333,8 +334,20 @@ function Step {
   # ---- 1b) 平時上限（沒有在需量降載、沒有人員讓手時才調）----
   if ($null -eq $cap -and $now -ge $manualUntil -and $m.run -gt 0 -and $m.enabled -ge 0.5 -and $note -notmatch 'demand-(derate|release)') {
     $tight = ($null -eq $ratio -or $ratio -ge $BOOST_OFF)
-    if ($eco -and $base -ge $ECO_BASE - 0.5) {
-      # 節電優先：09:00 前開機拉溫用 90/100；之後 80% 起，看熱房間加減
+    $hmNow = $now.ToString('HH:mm')
+    if ($hmNow -ge $AFTER_START) {
+      # 18:00 以後加班空調：上限固定 40%（不因熱房間加）
+      if (-not $afterSet -or [math]::Abs($base - $AFTER_LIMIT) -ge 0.5) {
+        $script:base = $AFTER_LIMIT; $script:afterSet = $true; $note = ($note + ' after-hours').Trim()
+      }
+    } elseif ($afterSet) {
+      # 隔天開機：回到平時上限
+      $script:afterSet = $false
+      $script:base = $(if ($eco) { $ECO_BASE } else { $BASE_LO }); $script:lastEco = $now; $note = ($note + ' after-hours-end').Trim()
+    }
+    if ($hmNow -ge $AFTER_START -or $note -match 'after-hours-end') { }
+    elseif ($eco -and $base -ge $ECO_BASE - 0.5) {
+      # 節電優先：09:00 前開機拉溫用 90/100；之後 65% 起，看熱房間加減
       $pd = ($now.ToString('HH:mm') -lt $PULLDOWN_END)
       $top = $(if ($tight) { $BASE_LO } else { $BASE_HI })
       $wantB = $base
@@ -402,8 +415,8 @@ function Step {
   # ---- 負載上限：只在需量降載／回升時改 ----
   $want = $(if ($null -ne $cap) { [math]::Min($base, $cap) } else { $base })
   $want = [math]::Max($MIN, [math]::Min($MAX, $want))
-  if ([math]::Abs($want - $cur) -ge 0.5 -and ($note -match 'demand|boost|eco')) {
-    $why = $(if ($note -match 'demand-derate') { '需量降載' } elseif ($note -match 'boost-on') { '需量有餘裕，上限放到 100%' } elseif ($note -match 'boost-off') { '需量接近契約或讀不到，上限退回 90%' } elseif ($note -match 'eco-up') { '積極節電：熱房間變多，上限加 10%' } elseif ($note -match 'eco-down') { '積極節電：熱房間少，上限減 10%' } else { '需量回升' })
+  if ([math]::Abs($want - $cur) -ge 0.5 -and ($note -match 'demand|boost|eco|after-hours')) {
+    $why = $(if ($note -match 'demand-derate') { '需量降載' } elseif ($note -match 'boost-on') { '需量有餘裕，上限放到 100%' } elseif ($note -match 'boost-off') { '需量接近契約或讀不到，上限退回 90%' } elseif ($note -match 'after-hours-end') { '隔天開機，回到平時上限' } elseif ($note -match 'after-hours') { '18:00 後加班空調，上限固定 40%' } elseif ($note -match 'eco-up') { '積極節電：熱房間變多，上限加 10%' } elseif ($note -match 'eco-down') { '積極節電：熱房間少，上限減 10%' } else { '需量回升' })
     $a2 = Write-Limit $want $why
     $action = ($action + ' ' + $a2).Trim()
     $cur = $(if ($Live) { $want } else { $sim })
