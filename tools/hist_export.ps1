@@ -98,14 +98,22 @@ try {
     $lgh = Join-Path 'D:\History' ("{0:yyMMdd}00.lgh" -f $d)
     if (-not (Test-Path $lgh)) { "{0:yyyy-MM-dd}  沒有歷史檔，跳過" -f $d; $d = $d.AddDays(1); continue }
     $sw = [Diagnostics.Stopwatch]::StartNew()
+    # 點位欄位叫 Tags（2026-11-06 診斷確認）；日期格式依序試，找到可用的就記住
     $p = @(
-      [CticHist]::Poke('TagNames', ($Tags -join ',')),
-      [CticHist]::Poke('StartDate', $d.ToString($DateFmt, [Globalization.CultureInfo]::InvariantCulture)),
+      [CticHist]::Poke('Tags', ($Tags -join ',')),
       [CticHist]::Poke('StartTime', '00:00:00'),
       [CticHist]::Poke('Duration', $Duration),
       [CticHist]::Poke('Interval', $Interval),
-      [CticHist]::Poke('FileName', $f),
-      [CticHist]::Poke('WriteFile', '1'))
+      [CticHist]::Poke('FileName', $f))
+    $fmts = @($DateFmt) + @('MM/dd/yy', 'MM/dd/yyyy', 'M/d/yy', 'yyyy/MM/dd') | Select-Object -Unique
+    $wf = $false
+    foreach ($fmt in $fmts) {
+      $p1 = [CticHist]::Poke('StartDate', $d.ToString($fmt, [Globalization.CultureInfo]::InvariantCulture))
+      $wf = [CticHist]::Poke('WriteFile', '1')
+      if ($wf) { $script:DateFmt = $fmt; break }
+      "  日期格式 {0} 不行：{1}" -f $fmt, [CticHist]::Get('Error')
+    }
+    $p += $wf
     $done = $false
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutS) {
       Start-Sleep -Milliseconds 500
@@ -113,7 +121,7 @@ try {
     }
     $err = [CticHist]::Get('Error')
     $rows = $(if (Test-Path $f) { (Get-Content $f | Measure-Object).Count } else { 0 })
-    "{0:yyyy-MM-dd}  poke={1}  完成={2}  列數={3}  {4:N0} 秒  Error={5}" -f $d, (($p | % { [int]$_ }) -join ''), $done, $rows, $sw.Elapsed.TotalSeconds, $err
+    "{0:yyyy-MM-dd}  日期格式={6}  poke={1}  完成={2}  列數={3}  {4:N0} 秒  Error={5}" -f $d, (($p | % { [int]$_ }) -join ''), $done, $rows, $sw.Elapsed.TotalSeconds, $err, $DateFmt
     if ($rows -gt 1) { $okN++ } else { $failN++; if ($failN -ge 3 -and $okN -eq 0) { throw '連續 3 天匯不出資料，先停下來檢查' } }
     $d = $d.AddDays(1)
   }
