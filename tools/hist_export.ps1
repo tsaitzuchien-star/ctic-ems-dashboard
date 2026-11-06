@@ -14,7 +14,8 @@ param(
   [string]$DateFmt = '',              # 空白 = 用 Windows 的簡短日期格式
   [string]$Out = 'C:\BMS_Export\hist',
   [int]$TimeoutS = 300,
-  [switch]$Probe
+  [switch]$Probe,
+  [switch]$Diag
 )
 $ErrorActionPreference = 'Stop'
 
@@ -71,8 +72,19 @@ if (-not [CticHist]::Open('HistData', 'Tagname')) { throw '連不上 HistData（
 try {
   $items = 'TagNames', 'StartDate', 'StartTime', 'Duration', 'Interval', 'FileName', 'WriteFile', 'Error'
   if ($Probe) {
-    foreach ($i in $items) { "{0,-10} = {1}" -f $i, $(([CticHist]::Get($i)) -replace '^$', '(空)') }
+    foreach ($i in $items) { $v = [CticHist]::Get($i); "{0,-10} = {1}" -f $i, $(if ($null -eq $v) { '(讀取失敗)' } elseif ($v -eq '') { '(空白)' } else { $v }) }
     "日期格式（Windows 簡短日期）：$([Globalization.CultureInfo]::CurrentCulture.DateTimeFormat.ShortDatePattern)"
+    return
+  }
+  if ($Diag) {
+    # 找出 HistData 接受的點位欄位名稱與格式
+    foreach ($name in 'TagNames', 'Tagnames', 'TagName', 'Tagname', 'Tags', 'Tag') {
+      foreach ($v in @($Tags[0], ($Tags -join ','), ('$' + $Tags[0]))) {
+        $ok = [CticHist]::Poke($name, $v)
+        "{0,-9} <- {1,-40} poke={2}  讀回={3}  Error={4}" -f $name, $v, [int]$ok, [CticHist]::Get($name), [CticHist]::Get('Error')
+      }
+    }
+    foreach ($v in '1', '1.0', 'On', 'TRUE') { "WriteFile <- {0,-5} poke={1}  Error={2}" -f $v, [int]([CticHist]::Poke('WriteFile', $v)), [CticHist]::Get('Error') }
     return
   }
   if (-not $Start -or -not $End) { throw '請給 -Start 與 -End（yyyy-MM-dd），或用 -Probe' }
