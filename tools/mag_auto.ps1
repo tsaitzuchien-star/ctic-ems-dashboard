@@ -31,8 +31,9 @@ $SpTags = @('SG_CHU2_Item40001', 'SG_CHU2_Item40003')   # 冰水出水溫度設�
 
 # ---- 參數 ----
 $MAX = 100; $MIN = 20                # 負載限制範圍（Cliff 2026-11-06：上限開放到 100%，由程式掌控）
-$BASE_HI = 100; $BASE_LO = 90        # 平時上限：需量有餘裕時 100%，接近契約時退回 90%
+$BASE_HI = 100; $BASE_LO = 90        # 平時上限：需量有餘裕且熱房間 ≥ 30% 時 100%，接近契約時退回 90%
 $BOOST_ON = 0.85; $BOOST_OFF = 0.90; $BOOST_UP_S = 600   # 需量推估 < 85% 契約才升到 100%（升級間隔 10 分鐘）；≥ 90% 立刻退回 90%
+$BOOST_HOT = 0.30   # 升到 100% 還要「最熱樓層熱房間 ≥ 30%」（Cliff 2026-11-06 19:33：首日中午放到 100% 多用電、效率差）
 $TRIG = 0.95; $HARD = 1.00; $CLEAR = 0.88; $CLEAR_S = 300
 $D_STEP = 10; $D_STEP_S = 60         # 需量降載：每步 10%、間隔 60 秒
 $SP_STEP = 0.5; $SP_STEP_S = 600     # 出水設定：每步 0.5°C、間隔 10 分鐘
@@ -441,7 +442,7 @@ function Step {
       if ($base -gt $BASE_LO) { $script:base = $BASE_LO; $note = ($note + ' boost-off').Trim() }   # 看不到需量 → 保守退回 90%
     } elseif ($ratio -ge $BOOST_OFF -and $base -gt $BASE_LO) {
       $script:base = $BASE_LO; $script:lastBoost = $now; $note = ($note + ' boost-off').Trim()
-    } elseif ($ratio -lt $BOOST_ON -and $base -lt $BASE_HI -and $base -ge $BASE_LO - 0.5 -and ($now - $lastBoost).TotalSeconds -ge $BOOST_UP_S) {
+    } elseif ($ratio -lt $BOOST_ON -and $base -lt $BASE_HI -and $base -ge $BASE_LO - 0.5 -and ($now - $lastBoost).TotalSeconds -ge $BOOST_UP_S -and $null -ne $hmX -and $hmX -ge $BOOST_HOT) {
       $script:base = $BASE_HI; $script:lastBoost = $now; $note = ($note + ' boost-on').Trim()
     }
   }
@@ -493,7 +494,7 @@ function Step {
   $want = $(if ($null -ne $cap) { [math]::Min($base, $cap) } else { $base })
   $want = [math]::Max($MIN, [math]::Min($MAX, $want))
   if ([math]::Abs($want - $cur) -ge 0.5 -and ($note -match 'demand|boost|eco|after-hours')) {
-    $why = $(if ($note -match 'demand-derate') { '需量降載' } elseif ($note -match 'boost-on') { '需量有餘裕，上限放到 100%' } elseif ($note -match 'boost-off') { '需量接近契約或讀不到，上限退回 90%' } elseif ($note -match 'after-hours-end') { '開機，回到時段上限（週末 30%）' } elseif ($note -match 'after-hours') { '18:00 後加班空調，上限固定 40%' } elseif ($note -match 'eco-up') { '節電：時段基準或熱房間，上限調高' } elseif ($note -match 'eco-down') { '節電：熱房間少或時段基準降低，上限調低' } else { '需量回升' })
+    $why = $(if ($note -match 'demand-derate') { '需量降載' } elseif ($note -match 'boost-on') { '需量有餘裕且熱房間多，上限放到 100%' } elseif ($note -match 'boost-off') { '需量接近契約或讀不到，上限退回 90%' } elseif ($note -match 'after-hours-end') { '開機，回到時段上限（週末 30%）' } elseif ($note -match 'after-hours') { '18:00 後加班空調，上限固定 40%' } elseif ($note -match 'eco-up') { '節電：時段基準或熱房間，上限調高' } elseif ($note -match 'eco-down') { '節電：熱房間少或時段基準降低，上限調低' } else { '需量回升' })
     $a2 = Write-Limit $want $why
     $action = ($action + ' ' + $a2).Trim()
     $cur = $(if ($Live) { $want } else { $sim })
