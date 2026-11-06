@@ -52,6 +52,7 @@
     <div class="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-6 border-b border-slate-700 pb-4 sticky top-0 bg-[#0f172a]/90 backdrop-blur-md z-10 py-4 px-2 -mx-2 rounded-lg">
         <div class="flex flex-wrap gap-2 w-full xl:w-auto" id="tabsContainer">
             <button onclick="switchTab('RT')" id="tab-RT" class="tab-btn hidden px-4 py-2 rounded-lg hover:bg-slate-800 text-rose-400 border border-transparent transition"><i class="fa-solid fa-bolt mr-2"></i>即時監控</button>
+            <button onclick="switchTab('SYS')" id="tab-SYS" class="tab-btn hidden px-4 py-2 rounded-lg hover:bg-slate-800 text-cyan-400 border border-transparent transition"><i class="fa-solid fa-diagram-project mr-2"></i>空調系統圖</button>
             <button onclick="switchTab('Live')" id="tab-Live" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-emerald-400 border border-transparent transition"><i class="fa-solid fa-gauge-high mr-2"></i>即時總覽</button>
             <button onclick="switchTab('EM')" id="tab-EM" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-sky-400 border border-transparent transition"><i class="fa-solid fa-magnifying-glass-chart mr-2"></i>能管分析</button>
             <button onclick="switchTab('A')" id="tab-A" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 border border-transparent transition"><i class="fa-solid fa-building mr-2"></i>A棟</button>
@@ -361,6 +362,7 @@
             liveCharts.forEach(c => c.destroy());
             liveCharts = [];
             if (currentTab === 'RT') { renderRT(container); return; }
+            if (currentTab === 'SYS') { renderSYS(container); return; }
             if (currentTab === 'Live') { renderLive(container); return; }
             if (currentTab === 'EM') { renderEM(container); return; }
 
@@ -424,6 +426,7 @@
                 rt = await res.json();
             } catch (e) { rt = { ok: false, error: '連不到本機程式 local_live.py' }; }
             if (currentTab === 'RT') updateRT();
+            if (currentTab === 'SYS') updateSYS();
         }
         function rtRow(label, id, unit = '') {
             return `<div class="flex justify-between text-sm py-1 border-b border-slate-700/50"><span class="text-slate-300">${label}</span><span class="font-mono text-white"><span id="${id}">—</span>${unit ? ' ' + unit : ''}</span></div>`;
@@ -514,6 +517,297 @@
         function rtSet(id, v) { const el = document.getElementById(id); if (el) el.innerHTML = v; }
         function rtPct(id, v) { rtSet(id, v == null ? '—' : fmt(v, 1) + '%'); const b = document.getElementById(id + '-bar'); if (b) b.style.width = Math.max(0, Math.min(100, v || 0)) + '%'; }
         function rtColor(el, r) { if (!el) return; el.classList.remove('border-l-emerald-400', 'border-l-amber-400', 'border-l-red-500'); el.classList.add(r >= 1 ? 'border-l-red-500' : r >= 0.9 ? 'border-l-amber-400' : 'border-l-emerald-400'); }
+        // ==========================================
+        // 空調系統圖（只在監控電腦本機版）：照中央監控畫面重畫冰水機房與空調箱，用 /api/live 的即時讀值上色。全部只讀。
+        // 點位來自空調監控主機 ac_logger.ps1（ac_latest.json 的 plant），每分鐘更新一次。
+        // ==========================================
+        const SYS_C = { chw: '#38bdf8', chr: '#818cf8', cw: '#fbbf24', cwr: '#f97316', gly: '#c084fc', glr: '#e879f9', pre: '#2dd4bf', prr: '#5eead4' };
+        // 泵浦：渦殼＋葉輪（運轉時葉輪會轉）
+        function sysPump(id, x, y, label, pos = 'b') {
+            const L = { b: [x, y + 30, 'middle'], t: [x, y - 21, 'middle'], l: [x - 20, y + 4, 'end'], r: [x + 20, y + 4, 'start'] }[pos];
+            const V = { b: [x, y - 21, 'middle'], t: [x, y + 30, 'middle'], l: [x - 20, y + 17, 'end'], r: [x + 20, y + 17, 'start'] }[pos];
+            return `<g id="sp-${id}" class="sys-eq sys-unk">
+                <rect x="${x + 6}" y="${y - 16}" width="9" height="8" rx="1.5" class="sys-nozzle"/>
+                <circle cx="${x}" cy="${y}" r="14" class="sys-volute"/><circle cx="${x}" cy="${y}" r="10" class="sys-eye"/>
+                <g class="sys-spin"><path d="M${x} ${y - 8} Q${x + 4} ${y - 3} ${x} ${y} M${x + 8} ${y + 3} Q${x + 2} ${y + 5} ${x} ${y} M${x - 7} ${y + 5} Q${x - 5} ${y - 2} ${x} ${y}" class="sys-blade"/><circle cx="${x}" cy="${y}" r="2.2" class="sys-hub"/></g>
+                <circle cx="${x}" cy="${y}" r="14" class="sys-led-ring"/>
+                <text x="${L[0]}" y="${L[1]}" text-anchor="${L[2]}" class="sys-lbl">${label}</text><text id="sv-${id}" x="${V[0]}" y="${V[1]}" text-anchor="${V[2]}" class="sys-val sys-vfd"></text></g>`;
+        }
+        // 管線：外殼＋底色＋發光流動粒子（照水流方向前進）
+        function sysPipe(d, color, on, w = 5) {
+            return `<g class="sys-pipe" data-on="${on}"><path d="${d}" class="sys-shell" stroke-width="${w + 6}"/><path d="${d}" class="sys-core" stroke="${color}" stroke-width="${w}"/>
+                <path d="${d}" class="sys-flow" stroke="${color}" stroke-width="${w - 1}" filter="url(#sysGlow)"/><path d="${d}" class="sys-flow2" stroke="#fff" stroke-width="${Math.max(1.5, w - 3)}"/></g>`;
+        }
+        function sysTxt(id, x, y, cls = 'sys-val', anchor = 'start') { return `<text id="${id}" x="${x}" y="${y}" class="${cls}" text-anchor="${anchor}"></text>`; }
+        // 設備卡（玻璃面板＋左側設備圖示）
+        function sysBox(id, x, y, w, h, title, icon, body) {
+            return `<g id="sb-${id}" class="sys-box sys-unk"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" class="sys-panel"/>
+                <rect x="${x}" y="${y}" width="4" height="${h}" rx="2" class="sys-accent"/>
+                ${icon}<text x="${x + 76}" y="${y + 21}" class="sys-ttl">${title}</text><circle cx="${x + w - 14}" cy="${y + 16}" r="5" class="sys-led"/><text id="sbs-${id}" x="${x + w - 24}" y="${y + 20}" text-anchor="end" class="sys-st"></text>${body}</g>`;
+        }
+        function icChiller(x, y, mag) {
+            return `<g transform="translate(${x},${y})"><rect x="0" y="8" width="60" height="40" rx="6" fill="url(#gSteel)" stroke="#64748b"/>
+                <rect x="4" y="36" width="52" height="9" rx="4.5" fill="url(#gEvap)"/><rect x="4" y="25" width="52" height="9" rx="4.5" fill="url(#gCond)"/>
+                <rect x="14" y="0" width="${mag ? 32 : 24}" height="16" rx="5" fill="url(#gComp)" stroke="#94a3b8"/>${mag ? '<text x="30" y="11" text-anchor="middle" class="sys-tiny">MAGLEV</text>' : ''}
+                <rect x="6" y="12" width="12" height="8" rx="1.5" class="sys-screen"/></g>`;
+        }
+        function icHex(x, y) {
+            let p = ''; for (let i = 0; i < 9; i++) p += `<rect x="${8 + i * 5}" y="6" width="3" height="40" rx="1" fill="${i % 2 ? '#c084fc' : '#38bdf8'}" opacity=".85"/>`;
+            return `<g transform="translate(${x},${y})"><rect x="0" y="0" width="60" height="52" rx="5" fill="url(#gSteel)" stroke="#64748b"/>${p}<rect x="2" y="2" width="4" height="48" fill="#475569"/><rect x="54" y="2" width="4" height="48" fill="#475569"/></g>`;
+        }
+        function icBuilding(x, y) {
+            let w = ''; for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) w += `<rect x="${7 + c * 11}" y="${8 + r * 11}" width="7" height="6" rx="1" class="sys-win"/>`;
+            return `<g transform="translate(${x},${y})"><rect x="0" y="0" width="52" height="54" rx="3" fill="url(#gSteel)" stroke="#64748b"/>${w}</g>`;
+        }
+        function icAhu(x, y) {
+            return `<g transform="translate(${x},${y})"><rect x="0" y="6" width="58" height="40" rx="5" fill="url(#gSteel)" stroke="#64748b"/>
+                <circle cx="20" cy="26" r="14" fill="#0f172a" stroke="#64748b"/><g class="sys-spin"><path d="M20 26 L20 14 A5 5 0 0 1 26 20 Z M20 26 L32 26 A5 5 0 0 1 26 32 Z M20 26 L20 38 A5 5 0 0 1 14 32 Z M20 26 L8 26 A5 5 0 0 1 14 20 Z" class="sys-fanb"/></g>
+                ${[0, 1, 2, 3].map(i => `<line x1="40" y1="${14 + i * 7}" x2="52" y2="${14 + i * 7}" stroke="#94a3b8" stroke-width="2"/>`).join('')}</g>`;
+        }
+        function sysTower(n, cx) {
+            const y = 76;
+            return `<g id="sb-CT${n}" class="sys-box sys-unk">
+                <path d="M${cx - 34} ${y + 22} L${cx + 34} ${y + 22} L${cx + 42} ${y + 100} L${cx - 42} ${y + 100} Z" fill="url(#gSteel)" stroke="#64748b"/>
+                ${[0, 1, 2, 3, 4, 5].map(i => `<line x1="${cx - 34 - i * 1.2}" y1="${y + 34 + i * 11}" x2="${cx + 34 + i * 1.2}" y2="${y + 34 + i * 11}" stroke="#334155" stroke-width="3"/>`).join('')}
+                <path d="M${cx - 30} ${y + 8} L${cx + 30} ${y + 8} L${cx + 34} ${y + 22} L${cx - 34} ${y + 22} Z" fill="#334155" stroke="#64748b"/>
+                <ellipse cx="${cx}" cy="${y + 8}" rx="30" ry="7" fill="#0f172a" stroke="#64748b"/>
+                <g class="sys-spin"><path d="M${cx} ${y + 8} L${cx - 22} ${y + 4} M${cx} ${y + 8} L${cx + 22} ${y + 12} M${cx} ${y + 8} L${cx + 8} ${y + 1} M${cx} ${y + 8} L${cx - 8} ${y + 15}" stroke="#cbd5e1" stroke-width="3" stroke-linecap="round"/></g>
+                <g class="sys-steam"><path d="M${cx - 12} ${y - 2} q-6 -10 0 -18 M${cx + 10} ${y - 4} q6 -10 0 -18" stroke="#e2e8f0" stroke-width="3" fill="none" stroke-linecap="round" opacity=".5"/></g>
+                <circle cx="${cx + 34}" cy="${y + 112}" r="0" class="sys-led"/>
+                <text x="${cx - 40}" y="${y + 156}" class="sys-ttl">CT-${n}</text><text id="sbs-CT${n}" x="${cx + 40}" y="${y + 156}" text-anchor="end" class="sys-st"></text>
+                ${sysTxt('svv-CT' + n, cx - 40, y + 174, 'sys-val')}</g>`;
+        }
+        function sysTank(k, x, y) {
+            const w = 56, h = 84;
+            return `<g><clipPath id="sysTc${k}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="0"/></clipPath>
+                <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#0f172a" stroke="#64748b"/>
+                <rect id="sbi-${k}" x="${x}" y="${y + h}" width="${w}" height="0" fill="url(#gIce)" clip-path="url(#sysTc${k})"/>
+                <ellipse cx="${x + w / 2}" cy="${y}" rx="${w / 2}" ry="7" fill="#1e293b" stroke="#64748b"/><ellipse cx="${x + w / 2}" cy="${y + h}" rx="${w / 2}" ry="7" fill="none" stroke="#64748b"/>
+                <text id="sbp-${k}" x="${x + w / 2}" y="${y + h / 2 + 6}" text-anchor="middle" class="sys-big">—</text>
+                <text x="${x + w / 2}" y="${y + h + 22}" text-anchor="middle" class="sys-dim">冰桶 0${k}</text></g>`;
+        }
+        function sysSvg() {
+            const P = SYS_C;
+            let s = `<defs>
+                <filter id="sysGlow" filterUnits="userSpaceOnUse" x="0" y="0" width="1400" height="850"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+                <linearGradient id="gSteel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#475569"/><stop offset="1" stop-color="#1e293b"/></linearGradient>
+                <linearGradient id="gComp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e2e8f0"/><stop offset="1" stop-color="#64748b"/></linearGradient>
+                <linearGradient id="gEvap" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0369a1"/><stop offset="1" stop-color="#38bdf8"/></linearGradient>
+                <linearGradient id="gCond" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#c2410c"/><stop offset="1" stop-color="#fbbf24"/></linearGradient>
+                <linearGradient id="gIce" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e0f2fe"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+                <radialGradient id="gVol" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#94a3b8"/><stop offset="1" stop-color="#1e293b"/></radialGradient>
+                <pattern id="sysGrid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0 L0 0 0 24" fill="none" stroke="#1e293b" stroke-width="1"/></pattern>
+            </defs><rect width="1400" height="850" fill="url(#sysGrid)" opacity=".6"/>`;
+            // 三個區塊（標題在區塊裡）
+            const zone = (x, w, t, e, c) => `<rect x="${x}" y="14" width="${w}" height="780" rx="16" class="sys-zone" stroke="${c}"/><text x="${x + 16}" y="38" class="sys-zt" fill="${c}">${t}</text><text x="${x + 16}" y="54" class="sys-ze">${e}</text>`;
+            s += zone(14, 440, '① 冷卻水側', 'CONDENSER WATER・把熱排到屋頂水塔', '#fb923c') + zone(466, 520, '② 冰水主機・儲冰', 'CHILLER PLANT・產生冰水、夜間製冰', '#38bdf8') + zone(998, 388, '③ 二次側送水 → 大樓', 'DISTRIBUTION・送到各樓空調', '#2dd4bf');
+            // ---- 冷卻水：水塔出水（冷）→ 幹管 → CWP → 主機 → 回水（熱）→ 水塔
+            const CW = 'CWP1,CWP2,CWP3,CWP4,CWP5,CWP6,CWP7,CWP8';
+            s += sysPipe('M398 706 L398 130 L70 130', P.cwr, CW);
+            s += sysPipe('M88 176 L88 205 L372 205 L372 676', P.cw, CW) + sysPipe('M203 176 L203 205', P.cw, CW) + sysPipe('M318 176 L318 205', P.cw, CW);
+            const rows = [
+                { id: 'CHU1', y: 190, h: 80, cw: ['CWP1', 'CWP2'], ch: ['CHP1', 'CHP2'] },
+                { id: 'CHU2', y: 292, h: 92, cw: ['CWP3', 'CWP4'], ch: ['CHP3', 'CHP4'] },
+                { id: 'HEX2', y: 404, h: 80, cw: null, ch: ['CHP5', 'CHP6'] },
+                { id: 'BCU', y: 552, h: 80, cw: ['CWP5', 'CWP6'], ch: null },
+            ];
+            const sup = [], ret = [];
+            rows.forEach(r => {
+                const cy = r.y + r.h / 2, a = cy - 14, b = cy + 16;
+                if (r.cw) s += sysPipe(`M372 ${a} L500 ${a}`, P.cw, r.cw.join(',')) + sysPipe(`M500 ${b} L398 ${b}`, P.cwr, r.cw.join(',')) + sysPump(r.cw[0], 424, a, r.cw[0], 't') + sysPump(r.cw[1], 466, a, r.cw[1], 't');
+                if (r.ch) { s += sysPipe(`M730 ${a} L912 ${a}`, P.chw, r.ch.join(',')) + sysPipe(`M940 ${b} L730 ${b}`, P.chr, r.ch.join(',')) + sysPump(r.ch[0], 774, a, r.ch[0], 't') + sysPump(r.ch[1], 822, a, r.ch[1], 't'); sup.push(a); ret.push(b); }
+            });
+            s += sysPipe('M372 676 L500 676', P.cw, 'CWP7,CWP8') + sysPipe('M500 706 L398 706', P.cwr, 'CWP7,CWP8') + sysPump('CWP7', 424, 676, 'CWP7', 't') + sysPump('CWP8', 466, 676, 'CWP8', 't');
+            // ---- 冰水幹管（主機 → 二次側）
+            const ALLCH = 'CHP1,CHP2,CHP3,CHP4,CHP5,CHP6';
+            s += sysPipe(`M912 ${Math.min(...sup)} L912 456`, P.chw, ALLCH, 7) + sysPipe(`M940 488 L940 ${Math.min(...ret)}`, P.chr, ALLCH, 7);
+            s += `<text x="905" y="${Math.min(...sup) - 10}" text-anchor="end" class="sys-dim">冰水幹管</text>` + sysTxt('sys-hdr', 905, Math.min(...sup) + 34, 'sys-val', 'end');
+            // 一般冰水 SCHP1–3
+            s += sysPipe('M912 221 L1112 221', P.chw, 'SCHP1,SCHP2,SCHP3') + sysPipe('M1112 251 L940 251', P.chr, 'SCHP1,SCHP2,SCHP3');
+            s += sysPump('SCHP1', 990, 221, 'SCHP1', 't') + sysPump('SCHP2', 1035, 221, 'SCHP2', 't') + sysPump('SCHP3', 1080, 221, 'SCHP3', 't');
+            // 預冷冰水：幹管 → PRE；HEX-1 →(SCHP4/5)→ PRE
+            s += sysPipe('M912 456 L1112 456', P.chw, 'SCHP4,SCHP5') + sysPipe('M1112 488 L940 488', P.chr, 'SCHP4,SCHP5');
+            s += sysPipe('M1150 662 L1150 560', P.pre, 'SCHP4,SCHP5') + sysPipe('M1210 560 L1210 662', P.prr, 'SCHP4,SCHP5');
+            s += sysPump('SCHP4', 1150, 630, 'SCHP4', 'l') + sysPump('SCHP5', 1150, 594, 'SCHP5', 'l');
+            // ---- 滷水：BCU-1 →(BP1/2)→ 冰桶（製冰）；冰桶 →(BP3/4)→ HEX-2（融冰）；冰桶 →(BP5/6)→ HEX-1
+            s += sysPipe('M730 578 L846 578 L846 664', P.gly, 'BP1,BP2') + sysPipe('M790 664 L790 608 L730 608', P.glr, 'BP1,BP2') + sysPump('BP1', 812, 578, 'BP1', 't');
+            s += sysPump('BP2', 846, 620, 'BP2', 'l');
+            s += sysPipe('M900 664 L900 520 L660 520 L660 484', P.gly, 'BP3,BP4') + sysPipe('M600 484 L600 536 L876 536 L876 664', P.glr, 'BP3,BP4') + sysPump('BP3', 712, 520, 'BP3', 't') + sysPump('BP4', 760, 520, 'BP4', 't');
+            s += sysPipe('M960 712 L1040 712', P.gly, 'BP5,BP6') + sysPipe('M1040 742 L960 742', P.glr, 'BP5,BP6') + sysPump('BP5', 988, 712, 'BP5', 't') + sysPump('BP6', 1018, 742, 'BP6', 'b');
+            // ---- 設備
+            [[1, 92], [2, 207], [3, 322]].forEach(([n, cx]) => { s += sysTower(n, cx); });
+            s += sysBox('CHU1', 500, 190, 230, 80, 'CHU-1 離心', icChiller(510, 214, false), sysTxt('sbt-CHU1', 576, 244) + `<text x="576" y="262" class="sys-dim">500 RT・長期未使用</text>`);
+            s += sysBox('CHU2', 500, 292, 230, 92, 'CHU-2 磁浮', icChiller(510, 318, true), sysTxt('sbt-CHU2', 576, 343) + sysTxt('sbl-CHU2', 576, 361) + sysTxt('sbc-CHU2', 576, 377, 'sys-dim'));
+            s += sysBox('HEX2', 500, 404, 230, 80, 'HEX-2 融冰板熱', icHex(510, 424), sysTxt('sbt-HEX2', 576, 450, 'sys-dim') + sysTxt('sbv-HEX2', 576, 470, 'sys-dim'));
+            s += sysBox('BCU', 500, 552, 230, 80, 'BCU-1 製冰主機', icChiller(510, 576, false), sysTxt('sbt-BCU', 576, 598) + sysTxt('sbk-BCU', 576, 618, 'sys-dim'));
+            s += `<g><rect x="500" y="660" width="150" height="64" rx="12" class="sys-panel"/><text x="514" y="684" class="sys-ttl">箱型機・CRAC</text><text x="514" y="704" class="sys-dim">PK2B1/2、B1F/2F 機房</text><text x="514" y="718" class="sys-dim">CWP7/8 供冷卻水</text></g>`;
+            s += `<g id="sb-ICE" class="sys-box sys-unk"><rect x="760" y="640" width="200" height="146" rx="12" class="sys-panel"/><text x="774" y="662" class="sys-ttl">儲冰槽</text><circle cx="946" cy="657" r="5" class="sys-led"/><text id="sbs-ICE" x="936" y="661" text-anchor="end" class="sys-st"></text>
+                ${sysTank(1, 778, 676)}${sysTank(2, 870, 676)}</g>`;
+            s += sysBox('HEX1', 1040, 662, 230, 92, 'HEX-1 預冷板熱', icHex(1050, 690), sysTxt('sbt-HEX1', 1116, 712, 'sys-dim') + sysTxt('sbv-HEX1', 1116, 732, 'sys-dim'));
+            s += sysBox('GEN', 1112, 170, 262, 130, '一般冰水', icBuilding(1124, 200), sysTxt('sbt-GEN', 1188, 244) + sysTxt('sbd-GEN', 1188, 264) + sysTxt('sbv-GEN', 1188, 284, 'sys-dim')) + `<text x="1188" y="42" class="sys-dim"></text>`;
+            s += `<text x="1188" y="224" class="sys-dim">→ 各樓 FCU、AHU</text>`;
+            s += sysBox('PRE', 1112, 420, 262, 140, '預冷冰水', icAhu(1124, 452), sysTxt('sbt-PRE', 1188, 494) + sysTxt('sbd-PRE', 1188, 514) + sysTxt('sbv-PRE', 1188, 534, 'sys-dim'));
+            s += `<text x="1188" y="474" class="sys-dim">→ 外氣空調箱 PAH</text>`;
+            // 圖例
+            const lg = [[P.chw, '冰水供水'], [P.chr, '冰水回水'], [P.cw, '冷卻水（冷）'], [P.cwr, '冷卻水（熱）'], [P.gly, '滷水'], [P.pre, '預冷冰水']];
+            s += lg.map(([c, t], i) => `<line x1="${24 + i * 128}" y1="822" x2="${56 + i * 128}" y2="822" stroke="${c}" stroke-width="5" stroke-linecap="round"/><text x="${62 + i * 128}" y="827" class="sys-dim">${t}</text>`).join('');
+            s += `<g transform="translate(1010,822)"><circle r="6" fill="#34d399"/><text x="11" y="5" class="sys-dim">運轉</text><circle cx="66" r="6" fill="#64748b"/><text x="77" y="5" class="sys-dim">停止</text><circle cx="132" r="6" fill="#f87171"/><text x="143" y="5" class="sys-dim">跳脫</text><circle cx="198" r="6" fill="none" stroke="#64748b" stroke-dasharray="2 2"/><text x="209" y="5" class="sys-dim">沒讀到</text></g>`;
+            return `<svg viewBox="0 0 1400 840" class="w-full" style="min-width:960px" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="中央空調系統圖">${s}</svg>`;
+        }
+        const SYS_AHU = [
+            ['4F', ['PAH_241', 'PAH_242']],
+            ['3F', ['PAH_131', 'PAH_132', 'PAH_231', 'PAH_232', 'AHU_G31', 'AHU_G21']],
+            ['2F', ['PAH_121', 'PAH_122', 'PAH_221', 'PAH_222', 'AHU_121', 'AHU_122']],
+            ['1F', ['PAH_111', 'PAH_112', 'PAH_211', 'PAH_212', 'PAH_213', 'AHU_111', 'AHU_112', 'AHU_G11']],
+            ['B1F', ['AHU_1B1', 'AHU_1B2', 'AHU_GB1', 'AHU_GB2']],
+        ];
+        const SYS_AHU_NOTE = { AHU_111: '餐廳', PAH_112: '餐廳', AHU_1B2: '大廳（24 h 警衛，維修中）', AHU_G11: '溫室實驗', AHU_G21: '溫室實驗', AHU_G31: '溫室實驗', AHU_GB1: '溫室實驗・恆溫恆濕', AHU_GB2: '溫室實驗' };
+        function renderSYS(container) {
+            container.innerHTML = `
+            <style>
+                .sys-lbl{fill:#cbd5e1;font-size:11px;font-family:ui-monospace,monospace;font-weight:600}.sys-val{fill:#f8fafc;font-size:12px;font-family:ui-monospace,monospace}
+                .sys-vfd{fill:#fde68a;font-size:11px}.sys-tiny{fill:#0f172a;font-size:6.5px;font-weight:800}.sys-big{fill:#0f172a;font-size:15px;font-weight:800;font-family:ui-monospace,monospace}
+                .sys-dim{fill:#94a3b8;font-size:11px}.sys-ttl{fill:#f1f5f9;font-size:13px;font-weight:700}.sys-st{font-size:11.5px;font-weight:700}
+                .sys-zone{fill:rgba(15,23,42,.35);stroke-width:1;stroke-opacity:.35;stroke-dasharray:6 6}.sys-zt{font-size:15px;font-weight:800}.sys-ze{fill:#64748b;font-size:10.5px;letter-spacing:.5px}
+                .sys-panel{fill:rgba(15,23,42,.88);stroke:#334155;stroke-width:1.5}.sys-accent{fill:#475569}
+                .sys-box.sys-run .sys-panel{stroke:#10b981;filter:drop-shadow(0 0 6px rgba(16,185,129,.45))}.sys-box.sys-run .sys-accent{fill:#10b981}
+                .sys-box.sys-trip .sys-panel{stroke:#ef4444;filter:drop-shadow(0 0 6px rgba(239,68,68,.5))}.sys-box.sys-trip .sys-accent{fill:#ef4444}
+                .sys-led{fill:#475569}.sys-run .sys-led{fill:#34d399;filter:drop-shadow(0 0 4px #34d399);animation:sysblink 2s ease-in-out infinite}.sys-trip .sys-led{fill:#f87171;animation:sysblink .6s infinite}.sys-unk .sys-led{fill:none;stroke:#64748b;stroke-dasharray:2 2}
+                .sys-run .sys-st{fill:#34d399}.sys-off .sys-st{fill:#94a3b8}.sys-trip .sys-st{fill:#f87171}.sys-unk .sys-st{fill:#64748b}
+                .sys-volute{fill:url(#gVol);stroke:#64748b;stroke-width:1.5}.sys-eye{fill:#0f172a}.sys-nozzle{fill:#475569}.sys-blade{fill:none;stroke:#94a3b8;stroke-width:2.2;stroke-linecap:round}.sys-hub{fill:#cbd5e1}
+                .sys-led-ring{fill:none;stroke:transparent;stroke-width:2.5}.sys-run .sys-led-ring{stroke:#34d399;filter:drop-shadow(0 0 5px #34d399)}.sys-run .sys-blade{stroke:#a7f3d0}
+                .sys-trip .sys-led-ring{stroke:#f87171;filter:drop-shadow(0 0 5px #f87171)}.sys-unk .sys-led-ring{stroke:#475569;stroke-dasharray:3 3}
+                .sys-spin{transform-box:fill-box;transform-origin:center}.sys-run .sys-spin{animation:sysspin .9s linear infinite}
+                .sys-steam{opacity:0}.sys-run .sys-steam{animation:syssteam 2.4s ease-out infinite}
+                .sys-fanb{fill:#94a3b8}.sys-run .sys-fanb{fill:#a7f3d0}.sys-win{fill:#334155}.sys-run .sys-win{fill:#fde68a;opacity:.85}.sys-screen{fill:#0f172a;stroke:#334155}.sys-run .sys-screen{fill:#065f46}
+                .sys-shell{fill:none;stroke:#020617;stroke-linecap:round;stroke-linejoin:round;opacity:.9}.sys-core{fill:none;stroke-linejoin:round;stroke-linecap:round;opacity:.22;transition:opacity .4s}
+                .sys-flow,.sys-flow2{fill:none;stroke-linecap:round;stroke-linejoin:round;display:none}
+                .sys-pipe.on .sys-core{opacity:.55}.sys-pipe.on .sys-flow{display:inline;stroke-dasharray:10 22;animation:sysflow 1.1s linear infinite}
+                .sys-pipe.on .sys-flow2{display:inline;stroke-dasharray:3 29;stroke-dashoffset:-4;animation:sysflow2 1.1s linear infinite;opacity:.9}
+                @keyframes sysflow{to{stroke-dashoffset:-32}} @keyframes sysflow2{to{stroke-dashoffset:-36}} @keyframes sysspin{to{transform:rotate(360deg)}}
+                @keyframes sysblink{50%{opacity:.35}} @keyframes syssteam{0%{opacity:0;transform:translateY(6px)}40%{opacity:.7}100%{opacity:0;transform:translateY(-10px)}}
+                @media (prefers-reduced-motion: reduce){.sys-pipe.on .sys-flow,.sys-pipe.on .sys-flow2,.sys-run .sys-spin,.sys-run .sys-steam,.sys-run .sys-led{animation:none}}
+                .sys-fan{display:inline-block}.sys-ahu-run .sys-fan{animation:sysspin 1.2s linear infinite;color:#34d399}
+            </style>
+            <div class="col-span-full flex flex-wrap justify-between items-center gap-2 text-sm"><span id="sys-status" class="font-mono text-slate-400">連線中…</span><span class="text-xs text-slate-500">只讀，不寫入任何點位・空調監控主機每分鐘更新</span></div>
+            <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                <div class="glass-card p-5 border-l-4 border-l-sky-400"><p class="text-slate-400 text-sm">冰水負荷（重新計算）</p><p class="text-3xl font-bold text-white font-mono"><span id="sys-rt">—</span><span class="text-sm font-normal text-slate-400 ml-1">RT</span></p><p class="text-xs text-slate-400 mt-1" id="sys-rt-sub"></p></div>
+                <div class="glass-card p-5 border-l-4 border-l-emerald-400"><p class="text-slate-400 text-sm">磁浮 COP（重新計算）</p><p class="text-3xl font-bold text-white font-mono"><span id="sys-cop">—</span></p><p class="text-xs text-slate-400 mt-1" id="sys-cop-sub"></p></div>
+                <div class="glass-card p-5 border-l-4 border-l-violet-400"><p class="text-slate-400 text-sm">冰桶液位 01／02</p><p class="text-3xl font-bold text-white font-mono"><span id="sys-ice">—</span><span class="text-sm font-normal text-slate-400 ml-1">%</span></p><p class="text-xs text-slate-400 mt-1" id="sys-ice-sub"></p></div>
+                <div class="glass-card p-5 border-l-4 border-l-amber-400"><p class="text-slate-400 text-sm">運轉中設備</p><p class="text-3xl font-bold text-white font-mono"><span id="sys-run">—</span></p><p class="text-xs text-slate-400 mt-1" id="sys-run-sub"></p></div>
+            </div>
+            <div class="col-span-full glass-card p-4 md:p-5"><h3 class="text-lg font-bold text-white mb-2"><i class="fa-solid fa-diagram-project mr-2 text-sky-400"></i>中央空調系統圖</h3>
+                <div class="overflow-x-auto">${sysSvg()}</div>
+                <p class="text-xs text-slate-500 mt-2">管路依中央監控畫面重畫成示意圖；發光粒子代表水正在流動，方向就是水流方向；泵浦葉輪、水塔風扇轉動代表運轉中。溫度為 InTouch 讀值；板熱的四個溫度依序是溫度 01→02 / 03→04；冷卻水塔數字為風扇變頻 %；泵浦旁的 % 是變頻輸出。</p></div>
+            <div class="col-span-full glass-card p-4 md:p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-building mr-2 text-emerald-400"></i>空調箱昇位圖（AHU／PAH 風車狀態・回風溫度・冰水閥）</h3>
+                <div class="space-y-2">${SYS_AHU.map(([fl, us]) => `<div class="flex gap-3 items-stretch"><div class="w-12 shrink-0 text-slate-300 font-bold font-mono pt-2">${fl}</div><div class="flex flex-wrap gap-2 flex-1">${us.map(u => `<div id="sa-${u}" class="rounded-lg border border-slate-600 bg-slate-800/60 px-3 py-2 min-w-[132px]"><div class="flex justify-between gap-2 text-sm"><span class="font-bold text-white"><i class="fa-solid fa-fan sys-fan mr-1 text-slate-500"></i>${u.replace('_', '-')}</span><span id="sas-${u}" class="text-xs text-slate-500">—</span></div><div id="sav-${u}" class="text-xs font-mono text-slate-300 mt-0.5">—</div>${SYS_AHU_NOTE[u] ? `<div class="text-[11px] text-slate-500">${SYS_AHU_NOTE[u]}</div>` : ''}</div>`).join('')}</div></div>`).join('')}</div>
+                <p class="text-xs text-slate-500 mt-3">箱型機 PKG01/02 與 CRAC20-1/2 在中央監控沒有狀態點，未列入。</p></div>`;
+            updateSYS();
+        }
+        function sysNum(v) { return (typeof v === 'number' && isFinite(v)) ? v : null; }
+        function sysState(pl, st, tr) {
+            const a = sysNum(pl[st]), b = tr ? sysNum(pl[tr]) : null;
+            if (b) return 'trip';
+            if (a == null) return 'unk';
+            return a > 0 ? 'run' : 'off';
+        }
+        function sysSetCls(el, st) { if (!el) return; el.classList.remove('sys-run', 'sys-off', 'sys-trip', 'sys-unk'); el.classList.add('sys-' + st); }
+        const SYS_STXT = { run: '運轉', off: '停止', trip: '跳脫', unk: '—' };
+        function updateSYS() {
+            if (!document.getElementById('sys-status') || !rt) return;
+            const a = (rt && rt.ac) || null, pl = (a && a.plant) || {}, m = rt.mag || {};
+            const T = n => sysNum(pl['SGB1DC51_Sys_T' + String(n).padStart(2, '0')]);
+            const f1 = v => fmt(sysNum(v), 1), f0 = v => fmt(sysNum(v), 0);
+            if (!a) { rtSet('sys-status', '<span class="text-amber-300">讀不到空調監控主機資料（\\\\10.10.2.4\\AC_Export\\ac_latest.json）</span>'); return; }
+            const age = (Date.now() - new Date(a.time.replace(' ', 'T') + '+08:00')) / 60000;
+            const noPlant = !a.plant;
+            rtSet('sys-status', a.viewer_ok === 0 ? '<span class="text-red-400">空調監控主機的 WindowViewer 沒開，讀不到點位</span>'
+                : age > 5 ? `<span class="text-amber-300">空調資料 ${Math.round(age)} 分鐘沒更新（${a.time.slice(11, 16)}）</span>`
+                : `<i class="fa-solid fa-circle text-emerald-400 mr-1 text-xs"></i>空調資料 ${a.time.slice(11, 16)}${noPlant ? '・<span class="text-amber-300">泵浦／水塔狀態還沒開始記錄（請更新空調監控主機的 ac_logger.ps1）</span>' : ''}`);
+            // 泵浦、水塔
+            const pumps = [...[1, 2, 3, 4, 5, 6].map(n => 'CHP' + n), ...[1, 2, 3, 4, 5, 6, 7, 8].map(n => 'CWP' + n), ...[1, 2, 3, 4, 5].map(n => 'SCHP' + n), ...[1, 2, 3, 4, 5, 6].map(n => 'BP' + n)];
+            const on = {}; let nRun = 0; const runList = [];
+            pumps.forEach(p => {
+                const st = sysState(pl, `SGB1DC51_${p}_ST`, `SGB1DC51_${p}_TR`); on[p] = st === 'run';
+                if (on[p]) { nRun++; runList.push(p); }
+                sysSetCls(document.getElementById('sp-' + p), st);
+                const vfd = sysNum(pl[`SGB1DC51_${p}_VFD_FB`]) ?? sysNum(pl[`SGB1DC51_${p}_VFD_AOP`]);
+                const tv = document.getElementById('sv-' + p); if (tv) tv.textContent = (on[p] && vfd != null) ? fmt(vfd, 0) + '%' : '';
+            });
+            [1, 2, 3].forEach(n => {
+                const st = sysState(pl, `SGB1DC51_CT${n}_ST`, `SGB1DC51_CT${n}_TR`); on['CT' + n] = st === 'run'; if (on['CT' + n]) { nRun++; runList.push('CT' + n); }
+                sysSetCls(document.getElementById('sb-CT' + n), st); rtSet('sbs-CT' + n, SYS_STXT[st]);
+                const v = sysNum(pl[`SGB1DC51_CT${n}_VFD_FB`]); rtSet('svv-CT' + n, st === 'run' && v != null ? `風扇 ${fmt(v, 0)}%` : '');
+            });
+            document.querySelectorAll('#cardsContainer .sys-pipe').forEach(p => p.classList.toggle('on', (p.dataset.on || '').split(',').some(k => on[k])));
+            // 主機
+            const chu2 = a.chu2_st != null ? (a.chu2_st > 0 ? 'run' : 'off') : sysState(pl, 'SGB1DC51_CHU2_ST');
+            const chu2s = sysNum(pl.SGB1DC51_CHU2_TR) ? 'trip' : chu2;
+            sysSetCls(document.getElementById('sb-CHU2'), chu2s); rtSet('sbs-CHU2', SYS_STXT[chu2s]);
+            const magPct = [a.mag_c1_pct, a.mag_c2_pct].map(sysNum).filter(v => v != null), magKw = [a.mag_c1_kw, a.mag_c2_kw].map(sysNum).filter(v => v != null);
+            const pct = magPct.length ? magPct.reduce((x, y) => x + y) / magPct.length : null, kw = magKw.length ? magKw.reduce((x, y) => x + y) : null;
+            rtSet('sbt-CHU2', `冰水 ${f1(a.mag_chws_c)} → ${f1(a.mag_chwr_c)} °C`);
+            rtSet('sbl-CHU2', `負載 ${fmt(pct, 0)}%／上限 ${f0(a.mag_limit_pct)}%`);
+            rtSet('sbc-CHU2', `${fmt(kw, 0)} kW・冷卻水 ${f1(a.mag_cws_c)}/${f1(a.mag_cwr_c)}`);
+            const chu1 = sysNum(pl.SGB1DC51_CHU1_TR) ? 'trip' : sysState(pl, 'SGB1DC51_CHU1_ST');
+            sysSetCls(document.getElementById('sb-CHU1'), chu1); rtSet('sbs-CHU1', SYS_STXT[chu1]);
+            rtSet('sbt-CHU1', `冰水 ${f1(T(6))} / ${f1(T(5))} °C`);
+            const bcu = sysNum(pl.SGB1DC51_BCU_TR11) ? 'trip' : (a.bcu_st != null ? (a.bcu_st > 0 ? 'run' : 'off') : 'unk');
+            sysSetCls(document.getElementById('sb-BCU'), bcu); rtSet('sbs-BCU', bcu === 'run' ? '製冰中' : SYS_STXT[bcu]);
+            rtSet('sbt-BCU', `滷水 ${f1(a.bcu_chws_c)} → ${f1(a.bcu_chwr_c)} °C`);
+            rtSet('sbk-BCU', `${f0(a.bcu_kw)} kW・冷卻水 ${f1(T(3))} / ${f1(T(4))} °C`);
+            const hex2 = (on.CHP5 || on.CHP6) ? 'run' : (noPlant ? 'unk' : 'off');
+            sysSetCls(document.getElementById('sb-HEX2'), hex2); rtSet('sbs-HEX2', hex2 === 'run' ? '融冰中' : SYS_STXT[hex2]);
+            rtSet('sbt-HEX2', `${f1(pl.SGB1DC51_Hex02_T01)}→${f1(pl.SGB1DC51_Hex02_T02)} / ${f1(pl.SGB1DC51_Hex02_T03)}→${f1(pl.SGB1DC51_Hex02_T04)}`);
+            rtSet('sbv-HEX2', `冰水閥 ${f0(pl.SGB1DC51_Hex02_Valve01_FB)}%`);
+            const hex1 = (on.BP5 || on.BP6) ? 'run' : (noPlant ? 'unk' : 'off');
+            sysSetCls(document.getElementById('sb-HEX1'), hex1); rtSet('sbs-HEX1', SYS_STXT[hex1]);
+            rtSet('sbt-HEX1', `${f1(pl.SGB1DC51_Hex01_T01)}→${f1(pl.SGB1DC51_Hex01_T02)} / ${f1(pl.SGB1DC51_Hex01_T03)}→${f1(pl.SGB1DC51_Hex01_T04)}`);
+            rtSet('sbv-HEX1', `冰水閥 ${f0(pl.SGB1DC51_Hex01_Valve01_FB)}%`);
+            // 冰桶
+            const i1 = sysNum(a.ice01_pct), i2 = sysNum(a.ice02_pct);
+            [[1, i1], [2, i2]].forEach(([k, v]) => {
+                const el = document.getElementById('sbi-' + k); if (!el) return;
+                const h = v == null ? 0 : Math.max(0, Math.min(100, v)) / 100 * 84, top = 676 + 84 - h;
+                el.setAttribute('y', top); el.setAttribute('height', h);
+                const t = document.getElementById('sbp-' + k); if (t) { t.textContent = v == null ? '—' : fmt(v, 0) + '%'; t.style.fill = v != null && v > 45 ? '#0f172a' : '#e2e8f0'; }
+            });
+            const ice = (on.BP3 || on.BP4 || on.BP5 || on.BP6) ? 'run' : (noPlant ? 'unk' : 'off');
+            sysSetCls(document.getElementById('sb-ICE'), ice); rtSet('sbs-ICE', bcu === 'run' ? '製冰' : ice === 'run' ? '融冰' : '');
+
+            // 二次側
+            const gen = ['SCHP1', 'SCHP2', 'SCHP3'].some(p => on[p]) ? 'run' : (noPlant ? 'unk' : 'off');
+            sysSetCls(document.getElementById('sb-GEN'), gen); rtSet('sbs-GEN', SYS_STXT[gen]);
+            rtSet('sbt-GEN', `供水 ${f1(T(13))}・回水 ${f1(T(14))} °C`);
+            rtSet('sbd-GEN', `差壓 DP-01 ${fmt(sysNum(pl.SGB1DC51_Sys_DP_01), 2)} bar`);
+            rtSet('sbv-GEN', `旁通閥 ${f0(pl.SGB1DC51_SCHP_123_Valve01_FB)}%`);
+            const pre = ['SCHP4', 'SCHP5'].some(p => on[p]) ? 'run' : (noPlant ? 'unk' : 'off');
+            sysSetCls(document.getElementById('sb-PRE'), pre); rtSet('sbs-PRE', SYS_STXT[pre]);
+            rtSet('sbt-PRE', `入水幹管 ${f1(T(15))} °C`);
+            rtSet('sbd-PRE', `差壓 DP-02 ${fmt(sysNum(pl.SGB1DC51_Sys_DP_02), 2)} bar`);
+            rtSet('sbv-PRE', `旁通閥 ${f0(pl.SGB1DC51_SCHP_45_Valve01_FB)}%`);
+            rtSet('sys-hdr', T(13) != null ? `${f1(T(13))} °C` : '');
+            rtSet('sys-t19', T(19) != null ? `冷卻入水 ${f1(T(19))} °C` : '');
+            // 重新計算冷凍噸與 COP：Q(kW)=流量(m³/h)×1.163×(回水−出水)，1 RT = 3.517 kW
+            const flow = sysNum(a.flow_m3h), dT = (sysNum(a.mag_chwr_c) != null && sysNum(a.mag_chws_c) != null) ? a.mag_chwr_c - a.mag_chws_c : null;
+            const q = (flow != null && dT != null && chu2 === 'run') ? flow * 1.163 * dT : null;
+            rtSet('sys-rt', q != null ? fmt(q / 3.517, 0) : '—');
+            rtSet('sys-rt-sub', q != null ? `流量 ${fmt(flow, 1)} m³/h × 溫差 ${fmt(dT, 1)} °C（原畫面 ${f0(a.cop_rt)} RT 用固定溫差 7.9 °C）` : '磁浮沒在跑或讀不到流量／溫度');
+            rtSet('sys-cop', q != null && kw ? fmt(q / kw, 2) : '—');
+            rtSet('sys-cop-sub', q != null && kw ? `冷凍能力 ${fmt(q, 0)} kW ÷ 壓縮機 ${fmt(kw, 0)} kW（原畫面 ${f1(a.cop)}）` : '—');
+            rtSet('sys-ice', `${f0(i1)}／${f0(i2)}`); rtSet('sys-ice-sub', `低於 ${f0(a.ice_low_sp)}% 會啟動冰機・${bcu === 'run' ? '製冰中' : ice === 'run' ? '融冰中' : '未製冰'}`);
+            rtSet('sys-run', noPlant ? '—' : `${nRun + (chu2 === 'run') + (bcu === 'run')} 台`);
+            rtSet('sys-run-sub', noPlant ? '等 ac_logger 更新' : [chu2 === 'run' ? 'CHU-2' : '', bcu === 'run' ? 'BCU-1' : '', ...runList].filter(Boolean).join('、') || '全部停止');
+            // 空調箱
+            SYS_AHU.forEach(([, us]) => us.forEach(u => {
+                const el = document.getElementById('sa-' + u); if (!el) return;
+                const f = sysNum(pl[u + '_Fan_ST']), t = sysNum(pl[u + '_RA_T']), v = sysNum(pl[u + '_CV01_FB']);
+                el.className = 'rounded-lg border px-3 py-2 min-w-[132px] ' + (f == null ? 'border-slate-700 bg-slate-800/40' : f > 0 ? 'sys-ahu-run border-emerald-500 bg-emerald-900/30 shadow-[0_0_12px_rgba(16,185,129,.35)]' : 'border-slate-600 bg-slate-800/60');
+                rtSet('sas-' + u, f == null ? '—' : f > 0 ? '<span class="text-emerald-400">運轉</span>' : '<span class="text-slate-400">停止</span>');
+                rtSet('sav-' + u, f == null ? '沒讀到' : `回風 ${t ? fmt(t, 1) + '°C' : '—'}・閥 ${v != null ? fmt(v, 0) + '%' : '—'}`);
+            }));
+        }
+
         function updateRT() {
             if (!document.getElementById('rt-status') || !rt) return;
             if (!rt.ok) { rtSet('rt-status', `<span class="text-red-400"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${rt.error || '讀不到資料'}</span>`); return; }
@@ -1144,7 +1438,7 @@
         }
 
         // 初始化：本機版預設開「即時監控」，雲端版開「即時總覽」
-        if (EMS_LOCAL) document.getElementById('tab-RT').classList.remove('hidden');
+        if (EMS_LOCAL) ['tab-RT', 'tab-SYS'].forEach(id => document.getElementById(id).classList.remove('hidden'));
         switchTab(EMS_LOCAL ? 'RT' : 'Live');
         fetchPowerData();
 
