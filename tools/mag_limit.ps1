@@ -1,16 +1,17 @@
 ﻿# 中創園區 磁浮冰機 CHU-2 負載限制 寫入工具 (mag_limit.ps1)
-# 只寫一個標籤：SG_CHU2_Item40035（CHU2壓縮機限制百分比，中控畫面「負載限制百分比」）。
+# 只寫三個標籤：負載限制百分比 SG_CHU2_Item40035，以及冰水出水溫度設定 1、2（SG_CHU2_Item40001/40003）。
 # 用法（空調監控主機，InTouch WindowViewer 要開著）：
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1            # 只讀目前狀態
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Set 85    # 寫入 85%，讀回確認
+#   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Sp 12.5   # 冰水出水溫度設定 1、2 寫入 12.5°C（只允許 10–14），讀回確認
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Tags A,B   # 只讀任意標籤（不寫入）
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Test      # 原值-5%，觀察 60 秒，寫回原值
 # 安全限制：只接受 30–100%；每次寫入記錄在 C:\BMS_Export\mag_control.log。
-param([double]$Set = -1, [switch]$Test, [int]$Watch = 60, [string[]]$Tags)
+param([double]$Set = -1, [switch]$Test, [int]$Watch = 60, [string[]]$Tags, [double]$Sp = -1)
 $ErrorActionPreference = 'Stop'
 $Out = 'C:\BMS_Export'
 $Tag = 'SG_CHU2_Item40035'
-$Min = 30; $Max = 100
+$Min = 20; $Max = 100
 $Log = Join-Path $Out 'mag_control.log'
 
 $src = @"
@@ -68,8 +69,8 @@ if ($Tags) {   # 只讀，不寫入
   exit 0
 }
 
-$names = 'enabled','limit_pct','chu2_st','c1_pct','c2_pct','c1_kw','c2_kw','chws_c','chwr_c'
-$tags  = [string[]]@('SG_CHU2_Item40035_SCH_ONOFF',$Tag,'SGB1DC51_CHU2_ST','SG_CHU2_Item30049','SG_CHU2_Item30051','SG_CHU2_Item30041','SG_CHU2_Item30043','SG_CHU2_Item30001','SG_CHU2_Item30003')
+$names = 'sp1','sp2','enabled','limit_pct','chu2_st','c1_pct','c2_pct','c1_kw','c2_kw','chws_c','chwr_c'
+$tags  = [string[]]@('SG_CHU2_Item40001','SG_CHU2_Item40003','SG_CHU2_Item40035_SCH_ONOFF',$Tag,'SGB1DC51_CHU2_ST','SG_CHU2_Item30049','SG_CHU2_Item30051','SG_CHU2_Item30041','SG_CHU2_Item30043','SG_CHU2_Item30001','SG_CHU2_Item30003')
 function Snap {
   $v = [CticDdeW]::Read($tags)
   if ($null -eq $v) { throw 'DDE 連不上 InTouch（WindowViewer 有開嗎？）' }
@@ -100,6 +101,17 @@ if ($Test) {
     Write-Limit $orig 'RESTORE' | Out-Null
   }
   Snap | Format-Table -AutoSize | Out-String | Write-Host
+} elseif ($Sp -ge 0) {
+  if ($Sp -lt 10 -or $Sp -gt 14) { throw "拒絕寫入出水設定 $Sp°C（只允許 10–14°C）" }
+  $b = Snap
+  $v = $Sp.ToString([Globalization.CultureInfo]::InvariantCulture)
+  $ok1 = [CticDdeW]::Poke('SG_CHU2_Item40001', $v); $ok2 = [CticDdeW]::Poke('SG_CHU2_Item40003', $v)
+  Start-Sleep -Seconds 2
+  $a = Snap
+  $line = "$(Get-Date -f s) SP set=$Sp before=$($b.sp1)/$($b.sp2) after=$($a.sp1)/$($a.sp2) poke_ok=$ok1/$ok2"
+  $line | Out-File $Log -Append -Encoding utf8
+  Write-Host $line
+  $a | Format-Table -AutoSize | Out-String | Write-Host
 } elseif ($Set -ge 0) {
   Write-Limit $Set 'MANUAL' | Out-Null
   Snap | Format-Table -AutoSize | Out-String | Write-Host

@@ -1,14 +1,17 @@
 ﻿# 中創園區 磁浮冰機 CHU-2 自動控制 (mag_auto.ps1) — 裝在空調監控主機
-# 寫入的只有「負載限制百分比」(SG_CHU2_Item40035)，不開關機、不改其他設定。
+# 寫入的只有三個點（Cliff 授權）：負載限制百分比 SG_CHU2_Item40035、冰水出水溫度設定 1/2 SG_CHU2_Item40001/40003。
+# 不開關機、不改其他設定。
 # 兩層控制：
 #  1) 契約需量（最優先，每 10 秒）：向監控電腦 http://10.10.2.20:8088/api/live 取 15 分鐘需量推估（台電基準），
-#     推估 ≥ 契約 95% 就每分鐘降 10%；回到 88% 以下 5 分鐘後逐步回升。
-#  2) 舒適度（07:30–19:00，冰機運轉中，每 10 分鐘最多調 5%）：
-#     依冰水出水溫度與目標值的差，加上有開的小型送風機房間溫度（比設定熱 1°C 的比例）調整。
-#     目標出水：夏月 11°C、非夏月 12°C；房間普遍偏涼放寬 +1°C，偏熱收緊 -1°C。
+#     推估 ≥ 契約 95% 就每分鐘把負載上限降 10%；回到 88% 以下 5 分鐘後逐步回升到原本的值。
+#     平常不動負載上限（維持人員設定的值）。
+#  2) 出水溫度重設（07:30–19:00，冰機運轉中，每 10 分鐘最多調 0.5°C）：調主機自己的出水設定值。
+#     季節上下限：夏月 10.5–11.5、過渡月 11.5–13、冬月 12–14 °C；室外露點 > 20°C 時上限 12°C。
+#     依「最熱的樓層」：任一層（≥5 台運轉）熱房間比例 ≥ 30% → 降 0.5°C；
+#     所有樓層 < 10% 且平均室溫低於設定 0.5°C → 升 0.5°C（07:30–09:00 開機拉溫、4 樓熱房間 ≥ 20%、需量吃緊時不升）。
 # 預設「試跑」：只記錄會怎麼調，不寫入。加 -Live 才寫入；加 -NoComfort 只做契約需量保護。
 # 停用：在 C:\BMS_Export 放 mag_auto_off.txt（不再寫入，維持現值）。
-# 人員手動改了負載限制 → 程式讓手：舒適度暫停 60 分鐘，以人員的值為準。
+# 人員手動改了負載限制或出水設定 → 程式讓手 60 分鐘，以人員的值為準。
 # 記錄：C:\BMS_Export\mag_auto_yyyy-MM-dd.csv；狀態：C:\BMS_Export\mag_auto_status.json（網站讀取）
 param([switch]$Live, [switch]$Once, [switch]$NoComfort)
 $ErrorActionPreference = 'Stop'
@@ -17,17 +20,17 @@ $Tag  = 'SG_CHU2_Item40035'
 $Api  = 'http://10.10.2.20:8088/api/live'
 $Off  = Join-Path $Out 'mag_auto_off.txt'
 $FcuList = Join-Path $Out 'fcu_tags.txt'
+$SpTags = @('SG_CHU2_Item40001', 'SG_CHU2_Item40003')   # 冰水出水溫度設定 1、2
 
 # ---- 參數 ----
 $MAX = 90; $MIN = 20                 # 負載限制範圍（Cliff 2026-11-06）
 $TRIG = 0.95; $HARD = 1.00; $CLEAR = 0.88; $CLEAR_S = 300
 $D_STEP = 10; $D_STEP_S = 60         # 需量降載：每步 10%、間隔 60 秒
-$C_STEP = 5;  $C_STEP_S = 600        # 舒適度：每步 5%、間隔 10 分鐘
-$C_START = '07:30'; $C_END = '19:00'
-$TGT_SUMMER = 11.0; $TGT_OTHER = 12.0
-$ERR_UP = 1.0        # 出水高於目標 1°C → 加載
-$ERR_DOWN = 0.3      # 出水在目標 +0.3°C 以內 → 可減載
-$HOT_UP = 0.30; $HOT_OK = 0.10       # 熱房間比例門檻
+$SP_STEP = 0.5; $SP_STEP_S = 600     # 出水設定：每步 0.5°C、間隔 10 分鐘
+$SP_HARD_MIN = 10.0; $SP_HARD_MAX = 14.0
+$C_START = '07:30'; $C_END = '19:00'; $PULLDOWN_END = '09:00'
+$HOT_UP = 0.30; $HOT_OK = 0.10; $HOT_4F_HOLD = 0.20   # 熱房間比例門檻
+$DEW_CAP_C = 20.0; $DEW_SP_MAX = 12.0                 # 室外露點高時出水上限
 $STALE_S = 90; $LOST_RESTORE_S = 900
 $MANUAL_HOLD_S = 3600
 
@@ -91,9 +94,10 @@ function Num($s) { $d = 0.0; if ([double]::TryParse("$s", [Globalization.NumberS
 function R1($x) { if ($null -eq $x) { '' } else { [math]::Round($x, 1) } }
 
 function Read-Mag {
-  $v = [CticDdeW]::Read([string[]]@($Tag, 'SGB1DC51_CHU2_ST', 'SG_CHU2_Item30041', 'SG_CHU2_Item30043', 'SG_CHU2_Item40035_SCH_ONOFF', 'SG_CHU2_Item30001', 'SG_CHU2_Item30003'))
+  $v = [CticDdeW]::Read([string[]]@($Tag, 'SGB1DC51_CHU2_ST', 'SG_CHU2_Item30041', 'SG_CHU2_Item30043', 'SG_CHU2_Item40035_SCH_ONOFF', 'SG_CHU2_Item30001', 'SG_CHU2_Item30003', $SpTags[0], $SpTags[1]))
   if ($null -eq $v) { return $null }
-  [pscustomobject]@{ limit = Num $v[0]; run = Num $v[1]; kw = ((Num $v[2]) + (Num $v[3])); enabled = Num $v[4]; chws = Num $v[5]; chwr = Num $v[6] }
+  [pscustomobject]@{ limit = Num $v[0]; run = Num $v[1]; kw = ((Num $v[2]) + (Num $v[3])); enabled = Num $v[4]; chws = Num $v[5]; chwr = Num $v[6]
+                     sp1 = Num $v[7]; sp2 = Num $v[8] }
 }
 
 # 小型送風機：有開的台數、比設定熱 1°C 以上的比例、平均 (室溫-設定)
@@ -101,29 +105,47 @@ $fcuTags = $null
 function Read-Fcu {
   if ($null -eq $script:fcuTags) {
     if (-not (Test-Path $FcuList)) { return $null }
-    $script:fcuTags = [string[]]@(Get-Content $FcuList | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '_FCU\d+_(Run|T|setT)$' })
+    $script:fcuTags = [string[]]@(Get-Content $FcuList | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '_FCU\d+_(Run|T|setT)$' -or $_ -match '_(OAT|OAH)$' })
   }
   $v = [CticDdeW]::Read($script:fcuTags, [uint32]1000, 60000)   # 最多 60 秒，讀不完這輪就跳過
   if ($null -eq $v) { return $null }
-  $u = @{}
+  $u = @{}; $oa = @{}
   for ($i = 0; $i -lt $fcuTags.Count; $i++) {
     if ($fcuTags[$i] -match '^(.*_FCU\d+)_(Run|T|setT)$') {
       if (-not $u.ContainsKey($matches[1])) { $u[$matches[1]] = @{} }
       $u[$matches[1]][$matches[2]] = Num $v[$i]
+    } elseif ($fcuTags[$i] -match '^(.*)_(OAT|OAH)$') {
+      if (-not $oa.ContainsKey($matches[1])) { $oa[$matches[1]] = @{} }
+      $oa[$matches[1]][$matches[2]] = Num $v[$i]
     }
   }
-  $on = 0; $hot = 0; $n = 0; $sum = 0.0
+  $on = 0; $hot = 0; $n = 0; $sum = 0.0; $fl = @{}
   foreach ($k in $u.Keys) {
     $f = $u[$k]
     if ($f.Run -gt 0.5) {
       $on++
       if ($f.T -gt 5 -and $f.T -lt 40 -and $f.setT -ge 10 -and $f.setT -le 35) {
         $n++; $dlt = $f.T - $f.setT; $sum += $dlt
-        if ($dlt -ge 1.0) { $hot++ }
+        $floor = $(if ($k -match '^SG_(B1|\d)F') { $(if ($matches[1] -eq 'B1') { 'B1F' } else { $matches[1] + 'F' }) } else { '?' })
+        if (-not $fl.ContainsKey($floor)) { $fl[$floor] = @{ n = 0; hot = 0 } }
+        $fl[$floor].n++
+        if ($dlt -ge 1.0) { $hot++; $fl[$floor].hot++ }
       }
     }
   }
-  [pscustomobject]@{ on = $on; n = $n; hot = $(if ($n) { $hot / $n } else { $null }); dt = $(if ($n) { $sum / $n } else { $null }) }
+  $floors = [ordered]@{}
+  foreach ($k in ($fl.Keys | Sort-Object)) { $floors[$k] = [ordered]@{ n = $fl[$k].n; hot = [math]::Round($fl[$k].hot / $fl[$k].n, 2) } }
+  # 室外露點：空調箱外氣溫濕度感測器，取有效值的中位數（Magnus 公式）
+  $dps = @()
+  foreach ($k in $oa.Keys) {
+    $t = $oa[$k].OAT; $rh = $oa[$k].OAH
+    if ($t -gt 0 -and $t -lt 45 -and $rh -gt 15 -and $rh -le 100) {
+      $g = [math]::Log($rh / 100) + 17.62 * $t / (243.12 + $t); $dps += 243.12 * $g / (17.62 - $g)
+    }
+  }
+  $dew = $null; if ($dps.Count) { $s = @($dps | Sort-Object); $dew = $s[[int][math]::Floor(($s.Count - 1) / 2)] }
+  [pscustomobject]@{ on = $on; n = $n; hot = $(if ($n) { $hot / $n } else { $null }); dt = $(if ($n) { $sum / $n } else { $null })
+                     floors = $floors; dew = $dew; oa_n = $dps.Count }
 }
 
 function Read-Demand {
@@ -137,20 +159,26 @@ function Read-Demand {
 }
 
 function Is-Summer($t) { $md = $t.Month * 100 + $t.Day; return ($md -ge 516 -and $md -le 1015) }
+function Sp-Band($t) {   # 出水設定季節上下限
+  $md = $t.Month * 100 + $t.Day
+  if ($md -ge 516 -and $md -le 1015) { return @(10.5, 11.5) }
+  if ($md -ge 1201 -or $md -le 331) { return @(12.0, 14.0) }
+  return @(11.5, 13.0)
+}
 function In-Window($t) { $hm = $t.ToString('HH:mm'); return ($hm -ge $C_START -and $hm -lt $C_END) }
 
 # ---- 狀態 ----
 $lastApiTime = $null; $lastApiSeen = Get-Date
 $mode = $(if ($Live) { 'LIVE' } else { 'DRY' })
 $sim = $null                 # 試跑時假想的現值
-$comfort = $null             # 舒適度想要的值
+$base = $null                # 沒有需量保護時的負載上限（人員設定值）
+$spSim = $null; $spLastWrite = $null; $lastSpStep = [datetime]::MinValue; $spWant = $null
 $cap = $null                 # 需量保護上限（null = 沒有在限制）
 $lastWrite = $null
 $lastDStep = [datetime]::MinValue; $lastCStep = [datetime]::MinValue
 $clearSince = $null; $lostSince = $null; $manualUntil = [datetime]::MinValue
 $fcu = $null; $fcuAt = [datetime]::MinValue
 $lastAction = ''; $lastActionAt = ''
-$tgtOffset = 0.0
 
 function Write-Limit([double]$p, [string]$why) {
   $p = [math]::Max($MIN, [math]::Min($MAX, [math]::Round($p)))
@@ -164,24 +192,40 @@ function Write-Limit([double]$p, [string]$why) {
   return "WOULD $why->$p"
 }
 
+function Write-Sp([double]$t, [string]$why) {
+  $t = [math]::Max($SP_HARD_MIN, [math]::Min($SP_HARD_MAX, [math]::Round($t * 2) / 2))
+  $script:lastAction = "$why -> 出水設定 $t°C"; $script:lastActionAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+  if ($Live) {
+    $ok1 = [CticDdeW]::Poke($SpTags[0], $t.ToString($inv)); $ok2 = [CticDdeW]::Poke($SpTags[1], $t.ToString($inv))
+    $script:spLastWrite = $t
+    return "$why->sp$t poke=$ok1/$ok2"
+  }
+  $script:spSim = $t
+  return "WOULD $why->sp$t"
+}
+
 function Save($now, $d, $m, $cur, $tgt, $action, $note) {
   $f = Join-Path $Out ('mag_auto_' + $now.ToString('yyyy-MM-dd') + '.csv')
-  if (-not (Test-Path $f)) { 'time,mode,period,contract_kw,projected_kw,ratio,now_kw,data_age_s,chu2_run,mag_kw,chws_c,chwr_c,chws_target,fcu_on,hot_share,avg_dt,limit_read,limit_eff,comfort,cap,action,note' | Out-File $f -Encoding utf8 }
+  if (-not (Test-Path $f)) { 'time,mode,period,contract_kw,projected_kw,ratio,now_kw,data_age_s,chu2_run,mag_kw,chws_c,chwr_c,chws_target,fcu_on,hot_share,avg_dt,limit_read,limit_eff,base,cap,sp_read,sp_eff,hot_max_floor,hot_4f,dewpoint,action,note' | Out-File $f -Encoding utf8 }
+  $hm = $null; $h4 = $null
+  if ($fcu -and $fcu.floors) { foreach ($k in $fcu.floors.Keys) { if ($fcu.floors[$k].n -ge 5 -and ($null -eq $hm -or $fcu.floors[$k].hot -gt $hm)) { $hm = $fcu.floors[$k].hot } }; if ($fcu.floors.Contains('4F')) { $h4 = $fcu.floors['4F'].hot } }
+  $spE = $(if (-not $Live -and $null -ne $spSim) { $spSim } elseif ($m) { $m.sp1 })
   $r = $(if ($d) { [math]::Round($d.proj / $d.limit, 3) } else { $null })
   $row = @($now.ToString('yyyy-MM-dd HH:mm:ss'), $mode, $(if($d){$d.period}), $(if($d){$d.limit}), $(if($d){$d.proj}), $r,
            $(if($d){$d.now}), $(if($d){[int]$d.age}), $(if($m){$m.run}), $(if($m){R1 $m.kw}), $(if($m){R1 $m.chws}), $(if($m){R1 $m.chwr}), $tgt,
            $(if($fcu){$fcu.on}), $(if($fcu -and $null -ne $fcu.hot){[math]::Round($fcu.hot,2)}), $(if($fcu){R1 $fcu.dt}),
-           $(if($m){$m.limit}), $cur, $comfort, $cap, $action, $note) -join ','
+           $(if($m){$m.limit}), $cur, $base, $cap, $(if($m){$m.sp1}), $spE, $hm, $h4, $(if($fcu){R1 $fcu.dew}), $action, $note) -join ','
   $row | Out-File $f -Append -Encoding utf8
   $st = [ordered]@{
     time = $now.ToString('yyyy-MM-dd HH:mm:ss'); mode = $mode; comfort_on = (-not $NoComfort); off = (Test-Path $Off)
     enabled = $(if ($m) { $m.enabled -ge 0.5 }); running = $(if ($m) { $m.run -gt 0 })
-    limit_read = $(if ($m) { $m.limit }); limit = $cur; comfort = $comfort; cap = $cap
+    limit_read = $(if ($m) { $m.limit }); limit = $cur; base = $base; cap = $cap
+    sp_read = $(if ($m) { $m.sp1 }); sp = $spE; floors = $(if ($fcu) { $fcu.floors }); dewpoint = $(if ($fcu) { R1 $fcu.dew })
     chws_c = $(if ($m) { R1 $m.chws }); chws_target = $tgt; fcu_on = $(if ($fcu) { $fcu.on })
     hot_share = $(if ($fcu -and $null -ne $fcu.hot) { [math]::Round($fcu.hot, 2) }); ratio = $r
     manual_hold = ($now -lt $manualUntil); note = $note; last_action = $lastAction; last_action_at = $lastActionAt
   }
-  ($st | ConvertTo-Json -Compress) | Out-File (Join-Path $Out 'mag_auto_status.json') -Encoding utf8
+  ($st | ConvertTo-Json -Compress -Depth 5) | Out-File (Join-Path $Out 'mag_auto_status.json') -Encoding utf8
   if ($action) { Write-Host $row }
 }
 
@@ -192,20 +236,23 @@ function Step {
   if (-not $m -or $null -eq $m.limit) { Save $now $d $m '' '' '' 'no-intouch'; return }
   if (($now - $fcuAt).TotalSeconds -ge 300) { try { $script:fcu = Read-Fcu } catch { $script:fcu = $null }; $script:fcuAt = $now }
   $cur = $(if (-not $Live -and $null -ne $sim) { $sim } else { $m.limit })
+  $sp  = $(if (-not $Live -and $null -ne $spSim) { $spSim } else { $m.sp1 })
   $action = ''; $note = ''
 
-  # 人員手動改了 → 讓手
-  if ($Live -and $null -ne $lastWrite -and [math]::Abs($m.limit - $lastWrite) -gt 0.5) {
-    $script:comfort = $m.limit; $script:cap = $null; $script:lastWrite = $null
+  # 人員手動改了 → 讓手 60 分鐘
+  $manLimit = ($Live -and $null -ne $lastWrite -and [math]::Abs($m.limit - $lastWrite) -gt 0.5)
+  $manSp = ($Live -and $null -ne $spLastWrite -and $null -ne $m.sp1 -and [math]::Abs($m.sp1 - $spLastWrite) -gt 0.05)
+  if ($manLimit -or $manSp) {
+    $script:base = $m.limit; $script:cap = $null; $script:lastWrite = $null; $script:spLastWrite = $null
     $script:manualUntil = $now.AddSeconds($MANUAL_HOLD_S)
-    $script:lastAction = "人員手動改成 $($m.limit)%，程式暫停舒適度 60 分鐘"; $script:lastActionAt = $now.ToString('yyyy-MM-dd HH:mm:ss')
+    $what = $(if ($manSp) { "出水設定 $($m.sp1)°C" } else { "負載上限 $($m.limit)%" })
+    $script:lastAction = "人員手動改成$what，程式讓手 60 分鐘"; $script:lastActionAt = $now.ToString('yyyy-MM-dd HH:mm:ss')
     Save $now $d $m $m.limit '' 'manual-override' ''; return
   }
-  if ($m.enabled -lt 0.5) { Save $now $d $m $cur '' '' 'limit-not-enabled'; return }
-  if (Test-Path $Off) { $script:sim = $null; $script:cap = $null; $script:comfort = $null; Save $now $d $m $m.limit '' '' 'off-switch'; return }
-  if ($null -eq $comfort) { $script:comfort = $cur }
+  if (Test-Path $Off) { $script:sim = $null; $script:spSim = $null; $script:cap = $null; $script:base = $null; Save $now $d $m $m.limit '' '' 'off-switch'; return }
+  if ($null -eq $cap) { $script:base = $cur }   # 沒在降載時，記住人員設定的負載上限
 
-  # ---- 1) 契約需量 ----
+  # ---- 1) 契約需量（負載上限；需要「是否啟用」打勾才有效）----
   $ratio = $null
   if (-not $d -or $d.age -gt $STALE_S) {
     if ($null -eq $lostSince) { $script:lostSince = $now }
@@ -215,52 +262,69 @@ function Step {
     $script:lostSince = $null
     $ratio = $d.proj / $d.limit
     $high = ($ratio -ge $HARD -or ($ratio -ge $TRIG -and $d.elapsed -ge 60))
-    if ($high -and $m.run -gt 0) {
+    if ($high -and $m.run -gt 0 -and $m.enabled -ge 0.5) {
       $script:clearSince = $null
       if (($now - $lastDStep).TotalSeconds -ge $D_STEP_S -and $cur -gt $MIN) {
-        $script:cap = [math]::Max($MIN, $cur - $D_STEP); $script:lastDStep = $now; $note = 'demand-derate'
+        $script:cap = [math]::Max($MIN, [math]::Min($MAX, $cur - $D_STEP)); $script:lastDStep = $now; $note = 'demand-derate'
       }
     } elseif ($null -ne $cap) {
       if ($ratio -lt $CLEAR) {
         if ($null -eq $clearSince) { $script:clearSince = $now }
         if (($now - $clearSince).TotalSeconds -ge $CLEAR_S -and ($now - $lastDStep).TotalSeconds -ge $D_STEP_S) {
           $script:cap = $cap + $D_STEP; $script:lastDStep = $now; $note = 'demand-release'
-          if ($cap -ge $comfort) { $script:cap = $null; $script:clearSince = $null }
+          if ($cap -ge $base) { $script:cap = $null; $script:clearSince = $null }
         }
       } else { $script:clearSince = $null }
     }
   }
+  if ($m.enabled -lt 0.5 -and $note -notmatch 'demand') { $note = ($note + ' limit-not-enabled').Trim() }
 
-  # ---- 2) 舒適度 ----
-  $tgt = $(if (Is-Summer $now) { $TGT_SUMMER } else { $TGT_OTHER })
-  if ($fcu -and $null -ne $fcu.hot) {
-    if ($fcu.hot -ge $HOT_UP) { $tgt -= 1 } elseif ($fcu.hot -lt $HOT_OK -and $fcu.dt -lt -0.5) { $tgt += 1 }
-  }
-  if ($NoComfort) { $script:comfort = $m.limit }
-  elseif (-not (In-Window $now) -or $m.run -le 0) { $script:comfort = $cur }
-  elseif ($now -lt $manualUntil) { $note = ($note + ' manual-hold').Trim() }
-  elseif (($now - $lastCStep).TotalSeconds -ge $C_STEP_S -and $null -ne $m.chws -and $m.chws -gt 0) {
-    $err = $m.chws - $tgt
-    $hot = $(if ($fcu -and $null -ne $fcu.hot) { $fcu.hot } else { 0 })
-    $demandTight = ($null -ne $ratio -and $ratio -ge 0.90) -or ($null -ne $cap)
-    if (($err -gt $ERR_UP -or ($hot -ge $HOT_UP -and $err -gt $ERR_DOWN)) -and -not $demandTight -and $comfort -lt $MAX) {
-      $script:comfort = [math]::Min($MAX, $comfort + $C_STEP); $script:lastCStep = $now; $note = ($note + " comfort-up(chws $([math]::Round($m.chws,1)) vs $tgt, hot $([math]::Round($hot,2)))").Trim()
-    } elseif ($err -lt $ERR_DOWN -and $hot -lt $HOT_OK -and $comfort -gt $MIN) {
-      $script:comfort = [math]::Max($MIN, $comfort - $C_STEP); $script:lastCStep = $now; $note = ($note + " comfort-down(chws $([math]::Round($m.chws,1)) vs $tgt, hot $([math]::Round($hot,2)))").Trim()
+  # ---- 2) 出水溫度重設（主機出水設定值）----
+  $band = Sp-Band $now
+  $hi = $band[1]
+  if ($fcu -and $null -ne $fcu.dew -and $fcu.dew -gt $DEW_CAP_C) { $hi = [math]::Min($hi, $DEW_SP_MAX) }
+  $tgt = $sp; $why = ''
+  if ($now -lt $manualUntil) { $note = ($note + ' manual-hold').Trim() }
+  elseif (-not $NoComfort -and (In-Window $now) -and $m.run -gt 0 -and $null -ne $sp -and $sp -gt 0) {
+    if ($false) { }
+    elseif ($sp -gt $hi + 0.01) { $tgt = $hi; $why = '出水設定超過上限' }
+    elseif ($sp -lt $band[0] - 0.01) { $tgt = $band[0]; $why = '出水設定低於下限' }
+    elseif (($now - $lastSpStep).TotalSeconds -ge $SP_STEP_S -and $fcu -and $fcu.floors) {
+      $hm = 0.0; $hmFloor = ''; $allOk = $true
+      foreach ($k in $fcu.floors.Keys) {
+        $f = $fcu.floors[$k]
+        if ($f.n -lt 5) { continue }
+        if ($f.hot -gt $hm) { $hm = $f.hot; $hmFloor = $k }
+        if ($f.hot -ge $HOT_OK) { $allOk = $false }
+      }
+      $h4 = $(if ($fcu.floors.Contains('4F')) { $fcu.floors['4F'].hot } else { 0 })
+      $demandTight = ($null -ne $ratio -and $ratio -ge 0.90) -or ($null -ne $cap)
+      $pulldown = ($now.ToString('HH:mm') -lt $PULLDOWN_END)
+      if ($hm -ge $HOT_UP -and -not $demandTight -and $sp -gt $band[0]) {
+        $tgt = $sp - $SP_STEP; $why = "$hmFloor 熱房間 $([math]::Round($hm*100))%，出水調低"
+      } elseif ($allOk -and $null -ne $fcu.dt -and $fcu.dt -lt -0.5 -and $h4 -lt $HOT_4F_HOLD -and -not $pulldown -and $sp -lt $hi) {
+        $tgt = $sp + $SP_STEP; $why = '房間普遍偏涼，出水調高省電'
+      }
+    }
+    $tgt = [math]::Max($band[0], [math]::Min($hi, $tgt))
+    if ([math]::Abs($tgt - $sp) -ge 0.25) {
+      $note = ($note + " sp $sp->$tgt").Trim()
+      $action = Write-Sp $tgt $why
+      $script:lastSpStep = $now
+      $sp = $tgt
     }
   }
 
-  # ---- 合成：取兩者較低者 ----
-  $want = $comfort
-  if ($null -ne $cap) { $want = [math]::Min($want, $cap) }
+  # ---- 負載上限：只在需量降載／回升時改 ----
+  $want = $(if ($null -ne $cap) { [math]::Min($base, $cap) } else { $base })
   $want = [math]::Max($MIN, [math]::Min($MAX, $want))
-  if ($m.limit -gt $MAX -and $null -eq $cap -and -not (In-Window $now)) { $want = $cur }   # 窗外不主動改人員設定
-  if ([math]::Abs($want - $cur) -ge 0.5 -and ($note -match 'demand|comfort')) {
-    $why = $(if ($note -match 'demand-derate') { '需量降載' } elseif ($note -match 'demand-release') { '需量回升' } elseif ($note -match 'comfort-up') { '出水偏高加載' } else { '冷量足夠減載' })
-    $action = Write-Limit $want $why
+  if ([math]::Abs($want - $cur) -ge 0.5 -and ($note -match 'demand')) {
+    $why = $(if ($note -match 'demand-derate') { '需量降載' } else { '需量回升' })
+    $a2 = Write-Limit $want $why
+    $action = ($action + ' ' + $a2).Trim()
     $cur = $(if ($Live) { $want } else { $sim })
   }
-  Save $now $d $m $cur $tgt $action $note
+  Save $now $d $m $cur $sp $action $note
 }
 
 if ($Once) { Step; Get-Content (Join-Path $Out 'mag_auto_status.json'); exit 0 }
