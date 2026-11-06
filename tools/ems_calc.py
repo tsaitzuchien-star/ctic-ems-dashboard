@@ -556,7 +556,7 @@ def savings(today_raw, now, base, holiday=False):
 
 
 def target_status(daily, now, cfg):
-    """帳單月 -2.1% 目標：daily = {"YYYY-MM-DD": 總表 kWh}（本月，今天可為部分），cfg = data/target.json。"""
+    """帳單月節電目標（target_pct）：daily = {"YYYY-MM-DD": 總表 kWh}（本月，今天可為部分），cfg = data/target.json。"""
     if not cfg or not daily:
         return None
     import calendar
@@ -583,9 +583,21 @@ def target_status(daily, now, cfg):
     need = (cap_meter - mtd) / left_days if left_days > 0 else None
     proj_bill = proj * cfg["bill_per_meter"]
     year = cfg["bill_ytd"] + proj_bill
+    pm = cfg.get("people_monthly")
+    ppl = sum(pm) / len(pm) if pm else None
+    pprev = cfg.get("people_prev")
+    pc = {}
+    if ppl and pprev:
+        prev_pc = cfg["fy_prev_total"] / pprev
+        proj_pc = year / ppl
+        pc = {"people_prev": pprev, "people_avg": round(ppl, 1), "people_now": pm[-1],
+              "per_cap_prev": round(prev_pc), "per_cap_proj": round(proj_pc),
+              "per_cap_target": round(cfg["fy_prev_total"] * (1 + cfg["target_pct"] / 100) / ppl),
+              "per_cap_pct": round((proj_pc / prev_pc - 1) * 100, 1)}
     return {"month": cfg["month"], "mtd_kwh": round(mtd), "days_done": len(done),
             "avg_weekday": round(avg_wd) if avg_wd else None, "avg_weekend": round(avg_we) if avg_we else None,
             "cap_meter": round(cap_meter), "cap_bill": round(cap_bill), "proj_meter": round(proj), "proj_bill": round(proj_bill),
             "need_per_day": round(need) if need else None, "rem_weekdays": rem_wd, "rem_weekends": rem_we,
             "proj_year_pct": round((year / cfg["fy_prev_total"] - 1) * 100, 2), "target_pct": cfg["target_pct"],
-            "bill_last_year": cfg["bill_last_year_same"], "last_year_month_meter": cfg.get("last_year_month_meter")}
+            "bill_last_year": cfg["bill_last_year_same"], "last_year_month_meter": cfg.get("last_year_month_meter"),
+            "fy_prev_total": cfg["fy_prev_total"], "bill_ytd": cfg["bill_ytd"], "year_proj": round(year), **pc}
