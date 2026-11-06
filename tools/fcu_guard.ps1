@@ -3,7 +3,7 @@
 #  1) 守住 25°C：運轉中的送風機設定 < 25°C → 改成 25°C（全天）。園區標準 25–26°C。
 #  2) 加班空調：平日 18:00 以後（到隔天 07:00），運轉中但不在申請名單的送風機 → 關機（_Run=0）。
 #     名單：C:\BMS_Export\afterhours_allow_yyyy-MM-dd.txt（當天，優先）或 afterhours_allow.txt，
-#     一行一個房號（例如 B239）或面板（例如 SG_2F31_P25），# 之後是註解。沒有名單檔 → 這條不執行；空檔 = 沒人申請。
+#     一行一個房號（例如 B239）或面板（例如 SG_2F31_P25），可加結束時間（例如 C303 19:00），# 之後是註解。沒有名單檔 → 這條不執行；空檔 = 沒人申請。
 #     房號 ↔ 面板對照：C:\BMS_Export\fcu_rooms.csv。週末先不做。
 # 永不碰：C:\BMS_Export\fcu_guard_exclude.txt（一行一個標籤開頭）。
 # 預設「試跑」：只記錄會怎麼做。加 -Live 才寫入。停用：放 C:\BMS_Export\fcu_guard_off.txt。
@@ -119,8 +119,13 @@ if ($after) {
   if ($null -eq $allow) { $after = $false; $status.after_rule = 'no-allow-list' } else { $status.after_rule = "$(Split-Path $af -Leaf): $($allow -join ' ')" }
 }
 function Allowed($u) {
+  # 名單每行：房號或面板，後面可加結束時間，例如「C303 19:00」= 申請到 19:00，之後照樣關
   $rooms = @((Rooms $u) -split ' ' | Where-Object { $_ })
-  foreach ($a in $allow) { if ($u.StartsWith($a)) { return $true }; if ($rooms -contains $a) { return $true } }
+  foreach ($line in $allow) {
+    $p = @($line -split '\s+'); $a = $p[0]
+    if ($p.Count -ge 2 -and $p[1] -match '^\d{1,2}:\d{2}$') { $end = $p[1].PadLeft(5, '0'); if ($hm -ge $end -or $hm -lt $AFTER_END) { continue } }
+    if ($u.StartsWith($a)) { return $true }; if ($rooms -contains $a) { return $true }
+  }
   return $false
 }
 
