@@ -97,8 +97,15 @@ function Rooms($u) { $p = $u -replace '_FCU\d+$',''; if ($roomOf.ContainsKey($u)
 
 # 讀 Run、setT
 $tags = [string[]]@(foreach ($u in $units) { "$($u)_Run"; "$($u)_setT" })
-$v = [CticDdeW]::Read($tags, 3000, 600000)
-if ($null -eq $v) { $status.note = 'dde-fail'; Save-Status; exit 1 }
+# 分批讀（每批 60 點、批次間停 1 秒），不要一次把 InTouch 佔滿，讓磁浮控制程式也讀得到
+$v = New-Object string[] $tags.Count
+for ($k = 0; $k -lt $tags.Count; $k += 60) {
+  $n = [math]::Min(60, $tags.Count - $k)
+  $part = [CticDdeW]::Read([string[]]$tags[$k..($k + $n - 1)], [uint32]1500, 30000)
+  if ($null -eq $part) { $status.note = "dde-fail at $k"; Save-Status; exit 1 }
+  for ($j = 0; $j -lt $n; $j++) { $v[$k + $j] = $part[$j] }
+  Start-Sleep -Milliseconds 1000
+}
 
 # 加班名單
 $hm = $now.ToString('HH:mm')
@@ -130,7 +137,7 @@ for ($i = 0; $i -lt $units.Count; $i++) {
   if (-not $act) { continue }
   if ($writes -ge $MAX_WRITES) { $status.note = "max-writes $MAX_WRITES"; break }
   $ok = ''
-  if ($Live) { $ok = [CticDdeW]::Poke($tag, $val); $writes++ }
+  if ($Live) { $ok = [CticDdeW]::Poke($tag, $val); $writes++; Start-Sleep -Milliseconds 300 }
   if ($act -eq 'off') { $status.after_off++ } else { $status.setT_fix++ }
   $rm = Rooms $u
   "$($now.ToString('yyyy-MM-dd HH:mm:ss')),$mode,$u,$rm,$act,$before,$ok" | Out-File $logf -Append -Encoding utf8

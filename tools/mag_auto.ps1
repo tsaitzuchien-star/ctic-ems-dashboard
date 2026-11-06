@@ -49,7 +49,15 @@ $AFTER_START = '18:00'; $AFTER_LIMIT = 40   # 園區供應 07:30–18:00，之�
 $ECO_SP_DN = 0.30; $ECO_4F_SP_DN = 0.45                                         # 出水：熱房間 ≥ 30%（4 樓 ≥ 45%）才降
 
 $mtx = New-Object System.Threading.Mutex($false, 'Global\CTIC_Mag_Auto')
-if (-not $Once -and -not $mtx.WaitOne(0)) { exit 0 }
+if (-not $Once -and -not $mtx.WaitOne(0)) {
+  # 另一個 mag_auto 還拿著鎖：如果它超過 5 分鐘沒更新狀態，就當它卡死，關掉它接手
+  $sf = Join-Path $Out 'mag_auto_status.json'
+  $stale = (-not (Test-Path $sf)) -or (((Get-Date) - (Get-Item $sf).LastWriteTime).TotalSeconds -gt 300)
+  if (-not $stale) { exit 0 }
+  Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like '*mag_auto.ps1*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  "$(Get-Date -f s) watchdog: status stale, killed stuck mag_auto and took over" | Out-File (Join-Path $Out 'mag_auto.log') -Append -Encoding utf8
+  try { if (-not $mtx.WaitOne(15000)) { exit 0 } } catch [System.Threading.AbandonedMutexException] { }
+}
 
 $src = @"
 using System; using System.Runtime.InteropServices; using System.Text;
