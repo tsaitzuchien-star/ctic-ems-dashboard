@@ -3,9 +3,10 @@
 # 用法（空調監控主機，InTouch WindowViewer 要開著）：
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1            # 只讀目前狀態
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Set 85    # 寫入 85%，讀回確認
+#   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Tags A,B   # 只讀任意標籤（不寫入）
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Test      # 原值-5%，觀察 60 秒，寫回原值
 # 安全限制：只接受 30–100%；每次寫入記錄在 C:\BMS_Export\mag_control.log。
-param([double]$Set = -1, [switch]$Test, [int]$Watch = 60)
+param([double]$Set = -1, [switch]$Test, [int]$Watch = 60, [string[]]$Tags)
 $ErrorActionPreference = 'Stop'
 $Out = 'C:\BMS_Export'
 $Tag = 'SG_CHU2_Item40035'
@@ -58,6 +59,14 @@ public static class CticDdeW {
 }
 "@
 if (-not ('CticDdeW' -as [type])) { Add-Type -TypeDefinition $src }
+
+if ($Tags) {   # 只讀，不寫入
+  $Tags = [string[]]@($Tags -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  $v = [CticDdeW]::Read([string[]]$Tags)
+  if ($null -eq $v) { throw 'DDE 連不上 InTouch（WindowViewer 有開嗎？）' }
+  for ($i = 0; $i -lt $Tags.Count; $i++) { '{0,-30} {1}' -f $Tags[$i], $v[$i] }
+  exit 0
+}
 
 $names = 'enabled','limit_pct','chu2_st','c1_pct','c2_pct','c1_kw','c2_kw','chws_c','chwr_c'
 $tags  = [string[]]@('SG_CHU2_Item40035_SCH_ONOFF',$Tag,'SGB1DC51_CHU2_ST','SG_CHU2_Item30049','SG_CHU2_Item30051','SG_CHU2_Item30041','SG_CHU2_Item30043','SG_CHU2_Item30001','SG_CHU2_Item30003')
