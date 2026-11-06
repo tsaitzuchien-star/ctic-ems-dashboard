@@ -97,6 +97,15 @@ foreach ($u in 'AHU_111','AHU_112','AHU_121','AHU_122','AHU_1B1','AHU_1B2','AHU_
                'PAH_111','PAH_112','PAH_121','PAH_122','PAH_131','PAH_132','PAH_211','PAH_212','PAH_213','PAH_221','PAH_222','PAH_231','PAH_232','PAH_241','PAH_242') {
   $plantTags.Add("$($u)_Fan_ST"); $plantTags.Add("$($u)_RA_T"); $plantTags.Add("$($u)_CV01_FB")
 }
+# COP 查核（2026-11-06）：各區 BTU 熱量計的瞬時流量（m³/h）與熱流量（GJ/h），加總可和冰水主機側流量計 CHSYS_FLOW_NOW 互相比對；
+# 另讀主機冰水／冷卻水壓差（可用廠商壓損曲線推算蒸發器流量）與系統累積流量、累積熱量。全部只讀。
+foreach ($b in 'PAH_131_BTU01','AHU121_122_BTU01','PAH121_122_BTU01','PAH_111_BTU01','AHU111_112_BTU01','FCU_B1_BTU01','AHU1B2_BTU01','AHU1B1_BTU01',
+               'FCU_3F_BTU01','FCU_3FG_BTU01','FCU_2FG_BTU01','PAH_212_BTU01','PAH_211_BTU01','FCU_1FG_BTU01','FCU_1FB_BTU01','PAH_213_BTU01','FCU_1FB_BTU02',
+               'PAH_221_BTU01','FCU_2FB_BTU01','PAH_222_BTU01','FCU_2FB_BTU02','PAH_231_BTU01','FCU_3FB_BTU01','PAH_232_BTU01','FCU_3FB_BTU02',
+               'PAH_241_BTU01','FCU_4FB_BTU01','PAH_242_BTU01','FCU_4FB_BTU02') {
+  $plantTags.Add("$($b)_Flow"); $plantTags.Add("$($b)_HeatFlow")
+}
+foreach ($t in 'SG_CHU2_Item30017','SG_CHU2_Item30019','SG_CHU2_Item30007','CHSYS_FLOW_TOT','CHSYS_B1F_BTU11_Heat_Acc','CHSYS_B1F_BTU12_Heat_Acc') { $plantTags.Add($t) }
 $plantTags = [string[]]$plantTags.ToArray()
 
 function Read-Once {
