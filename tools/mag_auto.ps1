@@ -15,7 +15,7 @@
 # 人員手動改了負載限制或出水設定 → 程式讓手 60 分鐘，以人員的值為準。
 # 積極節電（Cliff 2026-11-06 改選方案 B，到 11/30）：09:00 後平時上限 65%，非 4 樓最熱樓層熱房間 ≥ 25%（4 樓 ≥ 40%）
 #   每 10 分鐘 +10%（最多 100%），< 15%（4 樓 < 30%）再每 10 分鐘 -10% 回 65%；
-#   出水設定範圍 13.5–15 °C，熱房間 ≥ 30%（4 樓 ≥ 45%）就降、< 15%（4 樓 < 30%）就升。
+#   出水設定範圍 13–14 °C，熱房間 ≥ 30%（4 樓 ≥ 45%）就降、< 15%（4 樓 < 30%）就升。
 #   提前結束：放 C:\BMS_Export\mag_eco_off.txt。人員設定低於 65% 不會被調高。
 # 記錄：C:\BMS_Export\mag_auto_yyyy-MM-dd.csv；狀態：C:\BMS_Export\mag_auto_status.json（網站讀取）
 param([switch]$Live, [switch]$Once, [switch]$NoComfort)
@@ -35,7 +35,7 @@ $BOOST_ON = 0.85; $BOOST_OFF = 0.90; $BOOST_UP_S = 600   # 需量推估 < 85% �
 $TRIG = 0.95; $HARD = 1.00; $CLEAR = 0.88; $CLEAR_S = 300
 $D_STEP = 10; $D_STEP_S = 60         # 需量降載：每步 10%、間隔 60 秒
 $SP_STEP = 0.5; $SP_STEP_S = 600     # 出水設定：每步 0.5°C、間隔 10 分鐘
-$SP_HARD_MIN = 10.0; $SP_HARD_MAX = 15.0
+$SP_HARD_MIN = 10.0; $SP_HARD_MAX = 14.0
 $SET_FLOOR = 24.0                    # 熱房間判斷：室溫 ≥ max(設定, 24) + 1°C（設定下限 24°C，Cliff 2026-11-06）
 $C_START = '07:30'; $C_END = '19:00'; $PULLDOWN_END = '09:00'
 $HOT_UP = 0.30; $HOT_OK = 0.10; $HOT_4F_HOLD = 0.20   # 熱房間比例門檻
@@ -205,7 +205,7 @@ function Read-Demand {
 function Is-Summer($t) { $md = $t.Month * 100 + $t.Day; return ($md -ge 516 -and $md -le 1015) }
 function Is-Eco($t) { return ($t -lt $ECO_UNTIL -and -not (Test-Path $EcoOff)) }
 function Sp-Band($t) {   # 出水設定季節上下限
-  if (Is-Eco $t) { return @(13.5, 15.0) }
+  if (Is-Eco $t) { return @(13.0, 14.0) }   # 15:13 Cliff：上限 14（除濕，避免悶）
   $md = $t.Month * 100 + $t.Day
   if ($md -ge 516 -and $md -le 1015) { return @(10.5, 11.5) }
   if ($md -ge 1201 -or $md -le 331) { return @(12.0, 14.0) }
