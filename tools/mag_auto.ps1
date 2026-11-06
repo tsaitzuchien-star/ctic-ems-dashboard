@@ -36,7 +36,7 @@ $TRIG = 0.95; $HARD = 1.00; $CLEAR = 0.88; $CLEAR_S = 300
 $D_STEP = 10; $D_STEP_S = 60         # 需量降載：每步 10%、間隔 60 秒
 $SP_STEP = 0.5; $SP_STEP_S = 600     # 出水設定：每步 0.5°C、間隔 10 分鐘
 $SP_HARD_MIN = 10.0; $SP_HARD_MAX = 15.0
-$SET_FLOOR = 25.0                    # 熱房間判斷：室溫 ≥ max(設定, 25) + 1°C（園區標準 25–26°C，Cliff 2026-11-06）
+$SET_FLOOR = 24.0                    # 熱房間判斷：室溫 ≥ max(設定, 24) + 1°C（設定下限 24°C，Cliff 2026-11-06）
 $C_START = '07:30'; $C_END = '19:00'; $PULLDOWN_END = '09:00'
 $HOT_UP = 0.30; $HOT_OK = 0.10; $HOT_4F_HOLD = 0.20   # 熱房間比例門檻
 $DEW_CAP_C = 20.0; $DEW_SP_MAX = 12.0                 # 室外露點高時出水上限
@@ -163,7 +163,7 @@ function Read-Fcu {
     if ($f.Run -gt 0.5) {
       $on++
       if ($f.T -gt 5 -and $f.T -lt 40 -and $f.setT -ge 10 -and $f.setT -le 35) {
-        $dlt = $f.T - [math]::Max($f.setT, $SET_FLOOR)   # 使用者設太低（例如 13.5°C）以 25°C 計，不算冷氣不足
+        $dlt = $f.T - [math]::Max($f.setT, $SET_FLOOR)   # 使用者設太低（例如 13.5°C）以 24°C 計，不算冷氣不足
         # 以「房間」（同一面板 _Pnn）為單位：同房有一台已經涼了，就代表房間不熱（例如太冷只開一台，B443/B425 實測）
         $room = $k -replace '_FCU\d+$', ''
         if (-not $rooms.ContainsKey($room) -or $dlt -lt $rooms[$room]) { $rooms[$room] = $dlt }

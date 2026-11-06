@@ -1,6 +1,6 @@
 ﻿# 中創園區 送風機巡檢 (fcu_guard.ps1) — 裝在空調監控主機，排程每 15 分鐘跑一次
 # Cliff 2026-11-06 授權（B239 測試成功：寫 _Run=0 會關機、寫 _setT 溫控器會跟著變）：
-#  1) 守住 25°C：運轉中的送風機設定 < 25°C → 改成 25°C（全天）。園區標準 25–26°C。
+#  1) 守住 24°C：運轉中的送風機設定 < 24°C → 改成 24°C（全天）。
 #  2) 加班空調：平日 18:00 以後（到隔天 07:00），運轉中但不在申請名單的送風機 → 關機（_Run=0）。
 #     名單：C:\BMS_Export\afterhours_allow_yyyy-MM-dd.txt（當天，優先）或 afterhours_allow.txt，
 #     一行一個房號（例如 B239）或面板（例如 SG_2F31_P25），可加結束時間（例如 C303 19:00），# 之後是註解。沒有名單檔 → 這條不執行；空檔 = 沒人申請。
@@ -11,7 +11,7 @@
 param([switch]$Live, [switch]$NoAfter, [switch]$NoSetT)
 $ErrorActionPreference = 'Stop'
 $Out = 'C:\BMS_Export'
-$SET_MIN = 25.0
+$SET_MIN = 24.0   # Cliff 2026-11-06 15:08：老闆說 25 度有點悶，下限改 24
 $AFTER_START = '18:00'; $AFTER_END = '07:00'
 $MAX_WRITES = 150
 $mode = $(if ($Live) { 'LIVE' } else { 'DRY' })

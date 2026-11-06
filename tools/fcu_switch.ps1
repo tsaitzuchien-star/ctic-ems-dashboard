@@ -14,7 +14,7 @@ $Log = Join-Path $Out 'fcu_switch.log'
 $Allow = @('SG_2F31_P25')   # B239（Cliff 辦公室）
 if ($Allow -notcontains $Panel) { throw "拒絕：$Panel 不在授權清單（目前只有 $($Allow -join ', ')）" }
 if ((@([bool]$Off, [bool]$On, ($SetT -ge 0)) -eq $true).Count -gt 1) { throw '-Off、-On、-SetT 只能選一個' }
-if ($SetT -ge 0 -and ($SetT -lt 25 -or $SetT -gt 28)) { throw "拒絕寫入設定溫度 $SetT°C（只允許 25–28°C）" }
+if ($SetT -ge 0 -and ($SetT -lt 24 -or $SetT -gt 28)) { throw "拒絕寫入設定溫度 $SetT°C（只允許 24–28°C）" }
 
 $src = @"
 using System; using System.Runtime.InteropServices; using System.Text;
