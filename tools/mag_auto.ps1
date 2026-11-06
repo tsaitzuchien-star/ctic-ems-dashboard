@@ -25,7 +25,9 @@ $FcuExclude = Join-Path $Out 'fcu_exclude.txt'   # 不列入熱房間判斷的�
 $SpTags = @('SG_CHU2_Item40001', 'SG_CHU2_Item40003')   # 冰水出水溫度設定 1、2
 
 # ---- 參數 ----
-$MAX = 90; $MIN = 20                 # 負載限制範圍（Cliff 2026-11-06）
+$MAX = 100; $MIN = 20                # 負載限制範圍（Cliff 2026-11-06：上限開放到 100%，由程式掌控）
+$BASE_HI = 100; $BASE_LO = 90        # 平時上限：需量有餘裕時 100%，接近契約時退回 90%
+$BOOST_ON = 0.85; $BOOST_OFF = 0.90; $BOOST_UP_S = 600   # 需量推估 < 85% 契約才升到 100%（升級間隔 10 分鐘）；≥ 90% 立刻退回 90%
 $TRIG = 0.95; $HARD = 1.00; $CLEAR = 0.88; $CLEAR_S = 300
 $D_STEP = 10; $D_STEP_S = 60         # 需量降載：每步 10%、間隔 60 秒
 $SP_STEP = 0.5; $SP_STEP_S = 600     # 出水設定：每步 0.5°C、間隔 10 分鐘
@@ -200,7 +202,7 @@ $base = $null                # 沒有需量保護時的負載上限（人員設�
 $spSim = $null; $spLastWrite = $null; $lastSpStep = [datetime]::MinValue; $spWant = $null
 $cap = $null                 # 需量保護上限（null = 沒有在限制）
 $lastWrite = $null
-$lastDStep = [datetime]::MinValue; $lastCStep = [datetime]::MinValue
+$lastDStep = [datetime]::MinValue; $lastCStep = [datetime]::MinValue; $lastBoost = [datetime]::MinValue
 $clearSince = $null; $lostSince = $null; $manualUntil = [datetime]::MinValue
 $fcu = $null; $fcuAt = [datetime]::MinValue
 $lastAction = ''; $lastActionAt = ''
@@ -308,6 +310,17 @@ function Step {
   }
   if ($m.enabled -lt 0.5 -and $note -notmatch 'demand') { $note = ($note + ' limit-not-enabled').Trim() }
 
+  # ---- 1b) 平時上限 90/100%（沒有在需量降載、沒有人員讓手時才調）----
+  if ($null -eq $cap -and $now -ge $manualUntil -and $m.run -gt 0 -and $m.enabled -ge 0.5 -and $note -notmatch 'demand-(derate|release)') {
+    if ($null -eq $ratio) {
+      if ($base -gt $BASE_LO) { $script:base = $BASE_LO; $note = ($note + ' boost-off').Trim() }   # 看不到需量 → 保守退回 90%
+    } elseif ($ratio -ge $BOOST_OFF -and $base -gt $BASE_LO) {
+      $script:base = $BASE_LO; $script:lastBoost = $now; $note = ($note + ' boost-off').Trim()
+    } elseif ($ratio -lt $BOOST_ON -and $base -lt $BASE_HI -and $base -ge $BASE_LO - 0.5 -and ($now - $lastBoost).TotalSeconds -ge $BOOST_UP_S) {
+      $script:base = $BASE_HI; $script:lastBoost = $now; $note = ($note + ' boost-on').Trim()
+    }
+  }
+
   # ---- 2) 出水溫度重設（主機出水設定值）----
   $band = Sp-Band $now
   $hi = $band[1]
@@ -347,8 +360,8 @@ function Step {
   # ---- 負載上限：只在需量降載／回升時改 ----
   $want = $(if ($null -ne $cap) { [math]::Min($base, $cap) } else { $base })
   $want = [math]::Max($MIN, [math]::Min($MAX, $want))
-  if ([math]::Abs($want - $cur) -ge 0.5 -and ($note -match 'demand')) {
-    $why = $(if ($note -match 'demand-derate') { '需量降載' } else { '需量回升' })
+  if ([math]::Abs($want - $cur) -ge 0.5 -and ($note -match 'demand|boost')) {
+    $why = $(if ($note -match 'demand-derate') { '需量降載' } elseif ($note -match 'boost-on') { '需量有餘裕，上限放到 100%' } elseif ($note -match 'boost-off') { '需量接近契約或讀不到，上限退回 90%' } else { '需量回升' })
     $a2 = Write-Limit $want $why
     $action = ($action + ' ' + $a2).Trim()
     $cur = $(if ($Live) { $want } else { $sim })
