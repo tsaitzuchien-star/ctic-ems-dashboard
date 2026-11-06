@@ -125,13 +125,15 @@ function Read-Fcu {
   $on = 0; $hot = 0; $n = 0; $sum = 0.0; $fl = @{}
   # 「Run」只代表有通電／連線，不代表有開機（B425 實測 2026-11-06）。真正開機 = 風速 High/Middle/Low 任一為 1。
   $runKeys = @($u.Keys | Where-Object { $u[$_].Run -gt 0.5 })
+  $fanState = 'none'; $fanOff = 0; $sw = [Diagnostics.Stopwatch]::StartNew()
   if ($runKeys.Count) {
     $ft = [string[]]@($runKeys | ForEach-Object { "$($_)_Fan_High", "$($_)_Fan_Middle", "$($_)_Fan_Low" })
-    $fv = [CticDdeW]::Read($ft, [uint32]1000, 60000)
+    $fv = [CticDdeW]::Read($ft, [uint32]1000, 90000)
+    $fanState = $(if ($null -eq $fv) { 'read-failed' } else { 'ok' })
     for ($i = 0; $i -lt $runKeys.Count; $i++) {
       $fan = $null
       if ($null -ne $fv) { $a = Num $fv[3*$i]; $b = Num $fv[3*$i+1]; $c = Num $fv[3*$i+2]; if ($null -ne $a -or $null -ne $b -or $null -ne $c) { $fan = ($a -gt 0.5 -or $b -gt 0.5 -or $c -gt 0.5) } }
-      if ($fan -eq $false) { $u[$runKeys[$i]].Run = 0 }
+      if ($fan -eq $false) { $u[$runKeys[$i]].Run = 0; $fanOff++ }
     }
   }
   $ex = @(); if (Test-Path $FcuExclude) { $ex = @(Get-Content $FcuExclude -Encoding UTF8 | ForEach-Object { ($_ -split '#')[0].Trim() } | Where-Object { $_ }) }
@@ -162,7 +164,7 @@ function Read-Fcu {
   }
   $dew = $null; if ($dps.Count) { $s = @($dps | Sort-Object); $dew = $s[[int][math]::Floor(($s.Count - 1) / 2)] }
   [pscustomobject]@{ on = $on; n = $n; hot = $(if ($n) { $hot / $n } else { $null }); dt = $(if ($n) { $sum / $n } else { $null })
-                     floors = $floors; dew = $dew; oa_n = $dps.Count }
+                     floors = $floors; dew = $dew; oa_n = $dps.Count; fan = "$fanState off=$fanOff of=$($runKeys.Count) $([int]$sw.Elapsed.TotalSeconds)s" }
 }
 
 function Read-Demand {
@@ -241,7 +243,7 @@ function Save($now, $d, $m, $cur, $tgt, $action, $note) {
     time = $now.ToString('yyyy-MM-dd HH:mm:ss'); mode = $mode; comfort_on = (-not $NoComfort); off = (Test-Path $Off)
     enabled = $(if ($m) { $m.enabled -ge 0.5 }); running = $(if ($m) { $m.run -gt 0 })
     limit_read = $(if ($m) { $m.limit }); limit = $cur; base = $base; cap = $cap
-    sp_read = $(if ($m) { $m.sp1 }); sp = $spE; floors = $(if ($fcu) { $fcu.floors }); dewpoint = $(if ($fcu) { R1 $fcu.dew }); oa_n = $(if ($fcu) { $fcu.oa_n })
+    sp_read = $(if ($m) { $m.sp1 }); sp = $spE; floors = $(if ($fcu) { $fcu.floors }); dewpoint = $(if ($fcu) { R1 $fcu.dew }); oa_n = $(if ($fcu) { $fcu.oa_n }); fan_check = $(if ($fcu) { $fcu.fan })
     chws_c = $(if ($m) { R1 $m.chws }); chws_target = $tgt; fcu_on = $(if ($fcu) { $fcu.on })
     hot_share = $(if ($fcu -and $null -ne $fcu.hot) { [math]::Round($fcu.hot, 2) }); ratio = $r
     manual_hold = ($now -lt $manualUntil); note = $note; last_action = $lastAction; last_action_at = $lastActionAt
