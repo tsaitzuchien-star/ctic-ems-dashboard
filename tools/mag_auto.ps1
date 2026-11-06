@@ -46,7 +46,7 @@ $MANUAL_HOLD_S = 3600
 $ECO_UNTIL = [datetime]'2026-12-01'; $EcoOff = Join-Path $Out 'mag_eco_off.txt'
 $ECO_BASE = 65; $ECO_STEP = 10; $ECO_STEP_S = 600
 $ECO_HOT_UP = 0.25; $ECO_HOT_DN = 0.15; $ECO_4F_UP = 0.40; $ECO_4F_OK = 0.30   # 上限：非 4 樓最熱樓層 ≥ 25%（或 4 樓 ≥ 40%）就加；< 15%（4 樓 < 30%）才減
-$AFTER_START = '18:00'; $AFTER_LIMIT = 40   # 園區供應 07:30–18:00，之後是申請付費的加班空調，上限固定 40%（Cliff 2026-11-06）
+$AFTER_START = '18:00'; $AFTER_LIMIT = 30   # 園區供應 07:30–18:00，之後是申請付費的加班空調，上限固定 30%（Cliff 2026-11-06 16:51，原 40%）
 $ECO_SP_DN = 0.30; $ECO_4F_SP_DN = 0.45                                         # 出水：熱房間 ≥ 30%（4 樓 ≥ 45%）才降
 
 $mtx = New-Object System.Threading.Mutex($false, 'Global\CTIC_Mag_Auto')
