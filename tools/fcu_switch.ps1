@@ -1,18 +1,20 @@
 ﻿# 中創園區 送風機（FCU）開關測試工具 (fcu_switch.ps1) — 裝在空調監控主機
 # Cliff 2026-11-06 授權：先拿他的辦公室 B239（2F B 區面板 P25 = SG_2F31_P25，FCU01/02）測試遠端關閉。
-# 只允許寫 _Run（0 = 關、1 = 開），而且只限下面 $Allow 列的面板。
+# 只允許寫 _Run（0 = 關、1 = 開）和 _setT（只允許 25–28°C，園區標準 25–26°C），而且只限下面 $Allow 列的面板。
 # 用法（InTouch WindowViewer 要開著）：
 #   powershell -ExecutionPolicy Bypass -File fcu_switch.ps1                 # 只讀 B239 目前狀態
 #   powershell -ExecutionPolicy Bypass -File fcu_switch.ps1 -Off            # 寫 Run=0，每 5 秒讀回，看 60 秒
 #   powershell -ExecutionPolicy Bypass -File fcu_switch.ps1 -On             # 寫 Run=1，每 5 秒讀回，看 60 秒
+#   powershell -ExecutionPolicy Bypass -File fcu_switch.ps1 -SetT 25        # 寫設定溫度 25°C，每 5 秒讀回，看 60 秒
 # 每次寫入記錄在 C:\BMS_Export\fcu_switch.log
-param([string]$Panel = 'SG_2F31_P25', [switch]$Off, [switch]$On, [int]$Watch = 60)
+param([string]$Panel = 'SG_2F31_P25', [switch]$Off, [switch]$On, [double]$SetT = -1, [int]$Watch = 60)
 $ErrorActionPreference = 'Stop'
 $Out = 'C:\BMS_Export'
 $Log = Join-Path $Out 'fcu_switch.log'
 $Allow = @('SG_2F31_P25')   # B239（Cliff 辦公室）
 if ($Allow -notcontains $Panel) { throw "拒絕：$Panel 不在授權清單（目前只有 $($Allow -join ', ')）" }
-if ($Off -and $On) { throw '-Off 和 -On 只能選一個' }
+if ((@([bool]$Off, [bool]$On, ($SetT -ge 0)) -eq $true).Count -gt 1) { throw '-Off、-On、-SetT 只能選一個' }
+if ($SetT -ge 0 -and ($SetT -lt 25 -or $SetT -gt 28)) { throw "拒絕寫入設定溫度 $SetT°C（只允許 25–28°C）" }
 
 $src = @"
 using System; using System.Runtime.InteropServices; using System.Text;
@@ -80,12 +82,14 @@ function Snap {
 function Show($r) { $r | Format-Table -AutoSize | Out-String -Width 200 | Write-Host }
 
 $b = Snap; Show $b
-if (-not ($Off -or $On)) { exit 0 }
-$val = $(if ($Off) { '0' } else { '1' })
-$res = @(foreach ($u in $all) { "$($u)_Run=" + [CticDdeW]::Poke("$($u)_Run", $val) })
-$line = "$(Get-Date -f s) $Panel Run=$val poke: $($res -join ' ') before: $(($b | ForEach-Object { "$($_.fcu) Run=$($_.Run) H/M/L=$($_.Fan_High)/$($_.Fan_Middle)/$($_.Fan_Low)" }) -join '; ')"
+if (-not ($Off -or $On -or $SetT -ge 0)) { exit 0 }
+if ($SetT -ge 0) {
+  $val = $SetT.ToString([Globalization.CultureInfo]::InvariantCulture); $pt = 'setT'
+} else { $val = $(if ($Off) { '0' } else { '1' }); $pt = 'Run' }
+$res = @(foreach ($u in $all) { "$($u)_$pt=" + [CticDdeW]::Poke("$($u)_$pt", $val) })
+$line = "$(Get-Date -f s) $Panel $pt=$val poke: $($res -join ' ') before: $(($b | ForEach-Object { "$($_.fcu) Run=$($_.Run) H/M/L=$($_.Fan_High)/$($_.Fan_Middle)/$($_.Fan_Low) setT=$($_.setT)" }) -join '; ')"
 $line | Out-File $Log -Append -Encoding utf8
 Write-Host $line
 for ($t = 0; $t -lt $Watch; $t += 5) { Start-Sleep -Seconds 5; Snap | Format-Table -HideTableHeaders -AutoSize | Out-String -Width 200 | Write-Host }
 $a = Snap
-"$(Get-Date -f s) $Panel after: $(($a | ForEach-Object { "$($_.fcu) Run=$($_.Run) H/M/L=$($_.Fan_High)/$($_.Fan_Middle)/$($_.Fan_Low)" }) -join '; ')" | Out-File $Log -Append -Encoding utf8
+"$(Get-Date -f s) $Panel after: $(($a | ForEach-Object { "$($_.fcu) Run=$($_.Run) H/M/L=$($_.Fan_High)/$($_.Fan_Middle)/$($_.Fan_Low) setT=$($_.setT)" }) -join '; ')" | Out-File $Log -Append -Encoding utf8
