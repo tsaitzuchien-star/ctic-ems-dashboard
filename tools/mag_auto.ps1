@@ -16,6 +16,7 @@
 # 積極節電（Cliff 2026-11-06 改選方案 B，到 11/30）：09:00 後平時上限 65%，非 4 樓最熱樓層熱房間 ≥ 25%（4 樓 ≥ 40%）
 #   每 10 分鐘 +10%（最多 100%），< 15%（4 樓 < 30%）再每 10 分鐘 -10% 回 65%；
 #   出水設定範圍 13–14 °C，熱房間 ≥ 30%（4 樓 ≥ 45%）就降、< 15%（4 樓 < 30%）就升。
+#   平日時段基準（上限的底）：07:30–09:30 90%（出水 12–13）、09:30–11:00 65%、11:00–14:00 80%、14:00–16:00 60%、16:00–18:00 50%、18:00 後 40%。週末不套用。
 #   提前結束：放 C:\BMS_Export\mag_eco_off.txt。人員設定低於 65% 不會被調高。
 # 記錄：C:\BMS_Export\mag_auto_yyyy-MM-dd.csv；狀態：C:\BMS_Export\mag_auto_status.json（網站讀取）
 param([switch]$Live, [switch]$Once, [switch]$NoComfort)
@@ -203,9 +204,18 @@ function Read-Demand {
 }
 
 function Is-Summer($t) { $md = $t.Month * 100 + $t.Day; return ($md -ge 516 -and $md -le 1015) }
-function Is-Eco($t) { return ($t -lt $ECO_UNTIL -and -not (Test-Path $EcoOff)) }
+function Is-Eco($t) { return ($t -lt $ECO_UNTIL -and -not (Test-Path $EcoOff) -and $t.DayOfWeek -ne 'Saturday' -and $t.DayOfWeek -ne 'Sunday') }
+# 平日時段基準（Cliff 2026-11-06 15:35 同意）：上限的「底」，熱房間多再往上加（最多 100%）
+function Eco-Floor($t) {
+  $h = $t.ToString('HH:mm')
+  if ($h -lt '09:30') { return 90 }    # 早上剛上班最悶
+  if ($h -lt '11:00') { return 65 }
+  if ($h -lt '14:00') { return 80 }    # 餐廳營業、外氣最熱
+  if ($h -lt '16:00') { return 60 }
+  return 50                            # 16:00–18:00；18:00 後另有固定 40%
+}
 function Sp-Band($t) {   # 出水設定季節上下限
-  if (Is-Eco $t) { return @(13.0, 14.0) }   # 15:13 Cliff：上限 14（除濕，避免悶）
+  if (Is-Eco $t) { if ($t.ToString('HH:mm') -lt '09:30') { return @(12.0, 13.0) } else { return @(13.0, 14.0) } }   # 早上出水冷一點除濕；白天上限 14（15:13 Cliff）
   $md = $t.Month * 100 + $t.Day
   if ($md -ge 516 -and $md -le 1015) { return @(10.5, 11.5) }
   if ($md -ge 1201 -or $md -le 331) { return @(12.0, 14.0) }
@@ -351,19 +361,19 @@ function Step {
     } elseif ($afterSet) {
       # 隔天開機：回到平時上限
       $script:afterSet = $false
-      $script:base = $(if ($eco) { $ECO_BASE } else { $BASE_LO }); $script:lastEco = $now; $note = ($note + ' after-hours-end').Trim()
+      $script:base = $(if ($eco) { Eco-Floor $now } elseif ($now.DayOfWeek -eq 'Saturday' -or $now.DayOfWeek -eq 'Sunday') { 30 } else { $BASE_LO }); $script:lastEco = $now;   # 週末照慣例 30% $note = ($note + ' after-hours-end').Trim()
     }
     if ($hmNow -ge $AFTER_START -or $note -match 'after-hours-end') { }
-    elseif ($eco -and $base -ge $ECO_BASE - 0.5) {
-      # 節電優先：09:00 前開機拉溫用 90/100；之後 65% 起，看熱房間加減
-      $pd = ($now.ToString('HH:mm') -lt $PULLDOWN_END)
+    elseif ($eco) {
+      # 節電：時段基準（Eco-Floor）＋熱房間回饋；時段換到更高的基準時立刻拉上去
+      $fl = Eco-Floor $now
       $top = $(if ($tight) { $BASE_LO } else { $BASE_HI })
       $wantB = $base
-      if ($pd) { $wantB = $top }
+      if ($base -lt $fl - 0.5) { $wantB = $fl }
       elseif ($null -eq $hmX) { $wantB = [math]::Min($top, [math]::Max($base, 80)) }   # 讀不到送風機 → 保守 80%
       elseif ($hmX -ge $ECO_HOT_UP -or $h4f -ge $ECO_4F_UP) { if (($now - $lastEco).TotalSeconds -ge $ECO_STEP_S) { $wantB = [math]::Min($top, $base + $ECO_STEP) } }
-      elseif ($hmX -lt $ECO_HOT_DN -and $h4f -lt $ECO_4F_OK) { if (($now - $lastEco).TotalSeconds -ge $ECO_STEP_S) { $wantB = [math]::Max($ECO_BASE, $base - $ECO_STEP) } }
-      $wantB = [math]::Min($top, $wantB)
+      elseif ($hmX -lt $ECO_HOT_DN -and $h4f -lt $ECO_4F_OK) { if (($now - $lastEco).TotalSeconds -ge $ECO_STEP_S) { $wantB = [math]::Max($fl, $base - $ECO_STEP) } }
+      $wantB = [math]::Min([math]::Max($top, $fl), $wantB); if ($tight) { $wantB = [math]::Min($BASE_LO, $wantB) }
       if ([math]::Abs($wantB - $base) -ge 0.5) {
         $note = ($note + $(if ($wantB -gt $base) { ' eco-up' } else { ' eco-down' })).Trim()
         $script:base = $wantB; $script:lastEco = $now
@@ -424,7 +434,7 @@ function Step {
   $want = $(if ($null -ne $cap) { [math]::Min($base, $cap) } else { $base })
   $want = [math]::Max($MIN, [math]::Min($MAX, $want))
   if ([math]::Abs($want - $cur) -ge 0.5 -and ($note -match 'demand|boost|eco|after-hours')) {
-    $why = $(if ($note -match 'demand-derate') { '需量降載' } elseif ($note -match 'boost-on') { '需量有餘裕，上限放到 100%' } elseif ($note -match 'boost-off') { '需量接近契約或讀不到，上限退回 90%' } elseif ($note -match 'after-hours-end') { '隔天開機，回到平時上限' } elseif ($note -match 'after-hours') { '18:00 後加班空調，上限固定 40%' } elseif ($note -match 'eco-up') { '積極節電：熱房間變多，上限加 10%' } elseif ($note -match 'eco-down') { '積極節電：熱房間少，上限減 10%' } else { '需量回升' })
+    $why = $(if ($note -match 'demand-derate') { '需量降載' } elseif ($note -match 'boost-on') { '需量有餘裕，上限放到 100%' } elseif ($note -match 'boost-off') { '需量接近契約或讀不到，上限退回 90%' } elseif ($note -match 'after-hours-end') { '開機，回到時段上限（週末 30%）' } elseif ($note -match 'after-hours') { '18:00 後加班空調，上限固定 40%' } elseif ($note -match 'eco-up') { '節電：時段基準或熱房間，上限調高' } elseif ($note -match 'eco-down') { '節電：熱房間少或時段基準降低，上限調低' } else { '需量回升' })
     $a2 = Write-Limit $want $why
     $action = ($action + ' ' + $a2).Trim()
     $cur = $(if ($Live) { $want } else { $sim })
