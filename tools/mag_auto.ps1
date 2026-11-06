@@ -13,6 +13,9 @@
 # 預設「試跑」：只記錄會怎麼調，不寫入。加 -Live 才寫入；加 -NoComfort 只做契約需量保護。
 # 停用：在 C:\BMS_Export 放 mag_auto_off.txt（不再寫入，維持現值）。
 # 人員手動改了負載限制或出水設定 → 程式讓手 60 分鐘，以人員的值為準。
+# 節電優先（Cliff 2026-11-06 選「溫和節電」，到 11/30）：09:00 後平時上限 80%，熱房間多就每 10 分鐘 +10%（最多 100%），
+#   退到熱房間少再每 10 分鐘 -10% 回 80%；出水設定範圍 12.5–14 °C，熱房間 ≥ 20% 就降、少就升。
+#   提前結束：放 C:\BMS_Export\mag_eco_off.txt。人員設定低於 80% 不會被調高。
 # 記錄：C:\BMS_Export\mag_auto_yyyy-MM-dd.csv；狀態：C:\BMS_Export\mag_auto_status.json（網站讀取）
 param([switch]$Live, [switch]$Once, [switch]$NoComfort)
 $ErrorActionPreference = 'Stop'
@@ -38,6 +41,10 @@ $HOT_UP = 0.30; $HOT_OK = 0.10; $HOT_4F_HOLD = 0.20   # 熱房間比例門檻
 $DEW_CAP_C = 20.0; $DEW_SP_MAX = 12.0                 # 室外露點高時出水上限
 $STALE_S = 90; $LOST_RESTORE_S = 900
 $MANUAL_HOLD_S = 3600
+$ECO_UNTIL = [datetime]'2026-12-01'; $EcoOff = Join-Path $Out 'mag_eco_off.txt'
+$ECO_BASE = 80; $ECO_STEP = 10; $ECO_STEP_S = 600
+$ECO_HOT_UP = 0.10; $ECO_HOT_DN = 0.05; $ECO_4F_UP = 0.30   # 上限：非 4 樓最熱樓層 ≥ 10%（或 4 樓 ≥ 30%）就加；< 5%（4 樓 < 20%）才減
+$ECO_SP_DN = 0.20                                          # 出水：熱房間 ≥ 20% 才降
 
 $mtx = New-Object System.Threading.Mutex($false, 'Global\CTIC_Mag_Auto')
 if (-not $Once -and -not $mtx.WaitOne(0)) { exit 0 }
@@ -186,7 +193,9 @@ function Read-Demand {
 }
 
 function Is-Summer($t) { $md = $t.Month * 100 + $t.Day; return ($md -ge 516 -and $md -le 1015) }
+function Is-Eco($t) { return ($t -lt $ECO_UNTIL -and -not (Test-Path $EcoOff)) }
 function Sp-Band($t) {   # 出水設定季節上下限
+  if (Is-Eco $t) { return @(12.5, 14.0) }
   $md = $t.Month * 100 + $t.Day
   if ($md -ge 516 -and $md -le 1015) { return @(10.5, 11.5) }
   if ($md -ge 1201 -or $md -le 331) { return @(12.0, 14.0) }
@@ -202,7 +211,7 @@ $base = $null                # 沒有需量保護時的負載上限（人員設�
 $spSim = $null; $spLastWrite = $null; $lastSpStep = [datetime]::MinValue; $spWant = $null
 $cap = $null                 # 需量保護上限（null = 沒有在限制）
 $lastWrite = $null
-$lastDStep = [datetime]::MinValue; $lastCStep = [datetime]::MinValue; $lastBoost = [datetime]::MinValue
+$lastDStep = [datetime]::MinValue; $lastCStep = [datetime]::MinValue; $lastBoost = [datetime]::MinValue; $lastEco = [datetime]::MinValue
 $clearSince = $null; $lostSince = $null; $manualUntil = [datetime]::MinValue
 $fcu = $null; $fcuAt = [datetime]::MinValue
 $lastAction = ''; $lastActionAt = ''
@@ -310,9 +319,34 @@ function Step {
   }
   if ($m.enabled -lt 0.5 -and $note -notmatch 'demand') { $note = ($note + ' limit-not-enabled').Trim() }
 
-  # ---- 1b) 平時上限 90/100%（沒有在需量降載、沒有人員讓手時才調）----
+  # 樓層熱房間（非 4 樓最熱樓層、4 樓）
+  $hmX = $null; $hmXFloor = ''; $h4f = 0.0
+  if ($fcu -and $fcu.floors) {
+    foreach ($k in $fcu.floors.Keys) {
+      $f = $fcu.floors[$k]; if ($f.n -lt 5) { continue }
+      if ($k -eq '4F') { $h4f = $f.hot } elseif ($null -eq $hmX -or $f.hot -gt $hmX) { $hmX = $f.hot; $hmXFloor = $k }
+    }
+  }
+  $eco = Is-Eco $now
+
+  # ---- 1b) 平時上限（沒有在需量降載、沒有人員讓手時才調）----
   if ($null -eq $cap -and $now -ge $manualUntil -and $m.run -gt 0 -and $m.enabled -ge 0.5 -and $note -notmatch 'demand-(derate|release)') {
-    if ($null -eq $ratio) {
+    $tight = ($null -eq $ratio -or $ratio -ge $BOOST_OFF)
+    if ($eco -and $base -ge $ECO_BASE - 0.5) {
+      # 節電優先：09:00 前開機拉溫用 90/100；之後 80% 起，看熱房間加減
+      $pd = ($now.ToString('HH:mm') -lt $PULLDOWN_END)
+      $top = $(if ($tight) { $BASE_LO } else { $BASE_HI })
+      $wantB = $base
+      if ($pd) { $wantB = $top }
+      elseif ($null -eq $hmX) { $wantB = [math]::Min($top, [math]::Max($base, 90)) }   # 讀不到送風機 → 保守 90%
+      elseif ($hmX -ge $ECO_HOT_UP -or $h4f -ge $ECO_4F_UP) { if (($now - $lastEco).TotalSeconds -ge $ECO_STEP_S) { $wantB = [math]::Min($top, $base + $ECO_STEP) } }
+      elseif ($hmX -lt $ECO_HOT_DN -and $h4f -lt $HOT_4F_HOLD) { if (($now - $lastEco).TotalSeconds -ge $ECO_STEP_S) { $wantB = [math]::Max($ECO_BASE, $base - $ECO_STEP) } }
+      $wantB = [math]::Min($top, $wantB)
+      if ([math]::Abs($wantB - $base) -ge 0.5) {
+        $note = ($note + $(if ($wantB -gt $base) { ' eco-up' } else { ' eco-down' })).Trim()
+        $script:base = $wantB; $script:lastEco = $now
+      }
+    } elseif ($null -eq $ratio) {
       if ($base -gt $BASE_LO) { $script:base = $BASE_LO; $note = ($note + ' boost-off').Trim() }   # 看不到需量 → 保守退回 90%
     } elseif ($ratio -ge $BOOST_OFF -and $base -gt $BASE_LO) {
       $script:base = $BASE_LO; $script:lastBoost = $now; $note = ($note + ' boost-off').Trim()
@@ -343,7 +377,14 @@ function Step {
       $h4 = $(if ($fcu.floors.Contains('4F')) { $fcu.floors['4F'].hot } else { 0 })
       $demandTight = ($null -ne $ratio -and $ratio -ge 0.90) -or ($null -ne $cap)
       $pulldown = ($now.ToString('HH:mm') -lt $PULLDOWN_END)
-      if ($hm -ge $HOT_UP -and -not $demandTight -and $sp -gt $band[0]) {
+      if ($eco) {
+        if ($null -ne $hmX -and ($hmX -ge $ECO_SP_DN -or $h4f -ge $HOT_UP) -and -not $demandTight -and $sp -gt $band[0]) {
+          $f2 = $(if ($hmX -ge $ECO_SP_DN) { "$hmXFloor 熱房間 $([math]::Round($hmX*100))%" } else { "4F 熱房間 $([math]::Round($h4f*100))%" })
+          $tgt = $sp - $SP_STEP; $why = "$f2，出水調低（節電模式）"
+        } elseif ($null -ne $hmX -and $hmX -lt $HOT_OK -and $h4f -lt $HOT_4F_HOLD -and -not $pulldown -and $sp -lt $hi) {
+          $tgt = $sp + $SP_STEP; $why = '熱房間少，出水調高省電（節電模式）'
+        }
+      } elseif ($hm -ge $HOT_UP -and -not $demandTight -and $sp -gt $band[0]) {
         $tgt = $sp - $SP_STEP; $why = "$hmFloor 熱房間 $([math]::Round($hm*100))%，出水調低"
       } elseif ($allOk -and $null -ne $fcu.dt -and $fcu.dt -lt -0.5 -and $h4 -lt $HOT_4F_HOLD -and -not $pulldown -and $sp -lt $hi) {
         $tgt = $sp + $SP_STEP; $why = '房間普遍偏涼，出水調高省電'
@@ -360,8 +401,8 @@ function Step {
   # ---- 負載上限：只在需量降載／回升時改 ----
   $want = $(if ($null -ne $cap) { [math]::Min($base, $cap) } else { $base })
   $want = [math]::Max($MIN, [math]::Min($MAX, $want))
-  if ([math]::Abs($want - $cur) -ge 0.5 -and ($note -match 'demand|boost')) {
-    $why = $(if ($note -match 'demand-derate') { '需量降載' } elseif ($note -match 'boost-on') { '需量有餘裕，上限放到 100%' } elseif ($note -match 'boost-off') { '需量接近契約或讀不到，上限退回 90%' } else { '需量回升' })
+  if ([math]::Abs($want - $cur) -ge 0.5 -and ($note -match 'demand|boost|eco')) {
+    $why = $(if ($note -match 'demand-derate') { '需量降載' } elseif ($note -match 'boost-on') { '需量有餘裕，上限放到 100%' } elseif ($note -match 'boost-off') { '需量接近契約或讀不到，上限退回 90%' } elseif ($note -match 'eco-up') { '節電模式：熱房間變多，上限加 10%' } elseif ($note -match 'eco-down') { '節電模式：熱房間少，上限減 10%' } else { '需量回升' })
     $a2 = Write-Limit $want $why
     $action = ($action + ' ' + $a2).Trim()
     $cur = $(if ($Live) { $want } else { $sim })
