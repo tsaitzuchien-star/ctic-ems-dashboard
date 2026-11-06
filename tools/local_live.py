@@ -288,6 +288,8 @@ def fetch_forecast():
 
 
 # ---------------- 全迴路（本機版總覽與房間資料） ----------------
+# 即時前 10 名／夜間異常另外要看的盤進線（不是分路，也不是 "#盤" 總表）
+FAST_EXTRA = {"F0_B1P1_ESP_2B1_1_I1_KWH": "@ESP_2B1_1"}   # 冷卻水泵 CWP-7/8
 class Circuits:
     """15 分鐘整點讀值（G: 的 Circuit_*.csv＋本程式自己每 15 分鐘補的一列）＋最新一次讀值。"""
 
@@ -438,8 +440,27 @@ class Circuits:
             keep[t_live] = self.live[1]
             room_rows = sorted(keep.items())
         rooms = {"updated": (self.live[0] if self.live else now).strftime("%Y-%m-%d %H:%M"), "fcu": fcu_rooms,
-                 "circuits": ems_calc.circuit_stats(room_rows, self._month_first(now))}
+                 "circuits": ems_calc.circuit_stats(room_rows, self._month_first(now)), "fast": self.fast_kw()}
         return data, rooms
+
+    def fast_kw(self):
+        """即時前 10 名用：各迴路最近約 5 分鐘平均 kW（每分鐘更新）。分路電表每格 0.1 度，5 分鐘約 ±1.2 kW。"""
+        if not self.live:
+            return None
+        t1, v1 = self.live
+        prev = [r for r in self.recent if dt.timedelta(minutes=4) <= t1 - r[0] <= dt.timedelta(minutes=8)]
+        if not prev:
+            return None
+        t0, v0 = min(prev, key=lambda r: abs((t1 - r[0]).total_seconds() - 300))
+        mins = (t1 - t0).total_seconds() / 60
+        kw = {}
+        for tag, b in v1.items():
+            key = FAST_EXTRA.get(tag) or ems_calc.circuit_key(tag)
+            if key:
+                x = ems_calc.kw_between(v0.get(tag), b, mins)
+                if x:
+                    kw[key] = round(x, 2)
+        return {"from": t0.strftime("%H:%M"), "to": t1.strftime("%H:%M"), "min": round(mins, 1), "kw": kw}
 
 
 def read_ac_rows(now):
