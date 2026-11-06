@@ -467,7 +467,11 @@ def fcu_states(v, fmap):
             continue
         t = v.get(k + "_T")
         st = v.get(k + "_setT")
-        out.append((f, v[k + "_Run"] > 0.5, t if t is not None and 5 <= t <= 40 else None,
+        fans = [v.get(k + "_Fan_" + x) for x in ("High", "Middle", "Low")]
+        fans = [x for x in fans if x is not None]
+        # _Run 在溫控器關機時仍可能是 1；有讀到風速點位就以風速為準（任一段 = 1 才算開）
+        on = any(x > 0.5 for x in fans) if fans else v[k + "_Run"] > 0.5
+        out.append((f, on, t if t is not None and 5 <= t <= 40 else None,
                     st if st is not None and 10 <= st <= 35 else None, v.get(k + "_CV_State")))
     return out
 

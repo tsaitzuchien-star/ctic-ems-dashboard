@@ -112,7 +112,12 @@ function Read-Fcu {
   }
   $ts = $now.ToString('yyyy-MM-dd HH:mm:ss')
   $f = Join-Path $Out ('FCU_' + $now.ToString('yyyy-MM-dd') + '.csv')
-  if (-not (Test-Path $f)) { (@('time','viewer_ok') + $ft) -join ',' | Out-File $f -Encoding ascii }
+  $head = (@('time','viewer_ok') + $ft) -join ','
+  if ((Test-Path $f) -and ((Get-Content $f -TotalCount 1) -ne $head)) {
+    # 點位清單改過：舊檔改名保留，另開新檔，避免欄位對不上
+    Move-Item $f ($f -replace '\.csv$', ('_' + $now.ToString('HHmm') + '.csv')) -Force
+  }
+  if (-not (Test-Path $f)) { $head | Out-File $f -Encoding ascii }
   ((@($ts,$ok) + $vals) -join ',') | Out-File $f -Append -Encoding ascii
   $n = @($vals | Where-Object { $_ -ne '' }).Count
   return "$ts viewer_ok=$ok read $n/$($ft.Count) in $([math]::Round($sw.Elapsed.TotalSeconds,1)) s"
