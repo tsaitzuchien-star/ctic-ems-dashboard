@@ -13,6 +13,7 @@ param(
   [string]$Duration = '24h',          # 每個檔涵蓋的長度
   [string]$DateFmt = '',              # 空白 = 用 Windows 的簡短日期格式
   [string]$Out = 'C:\BMS_Export\hist',
+  [string]$HistDir = 'D:\History',   # 歷史檔資料夾（HistData 的 DataDir）
   [int]$TimeoutS = 300,
   [switch]$Probe,
   [switch]$Diag
@@ -70,7 +71,7 @@ function Ensure-HistData {
 Ensure-HistData
 if (-not [CticHist]::Open('HistData', 'Tagname')) { throw '連不上 HistData（DDE HistData|Tagname）' }
 try {
-  $items = 'TagNames', 'StartDate', 'StartTime', 'Duration', 'Interval', 'FileName', 'WriteFile', 'Error'
+  $items = 'DataDir', 'Tags', 'StartDate', 'StartTime', 'Duration', 'Interval', 'FileName', 'WriteFile', 'Error'
   if ($Probe) {
     foreach ($i in $items) { $v = [CticHist]::Get($i); "{0,-10} = {1}" -f $i, $(if ($null -eq $v) { '(讀取失敗)' } elseif ($v -eq '') { '(空白)' } else { $v }) }
     "日期格式（Windows 簡短日期）：$([Globalization.CultureInfo]::CurrentCulture.DateTimeFormat.ShortDatePattern)"
@@ -95,17 +96,18 @@ try {
   while ($d -le $e) {
     $f = Join-Path $Out ("{0}_{1:yyyy-MM-dd}.csv" -f $Prefix, $d)
     if (Test-Path $f) { $d = $d.AddDays(1); continue }
-    $lgh = Join-Path 'D:\History' ("{0:yyMMdd}00.lgh" -f $d)
+    $lgh = Join-Path $HistDir ("{0:yyMMdd}00.lgh" -f $d)
     if (-not (Test-Path $lgh)) { "{0:yyyy-MM-dd}  沒有歷史檔，跳過" -f $d; $d = $d.AddDays(1); continue }
     $sw = [Diagnostics.Stopwatch]::StartNew()
     # 點位欄位叫 Tags（2026-11-06 診斷確認）；日期格式依序試，找到可用的就記住
     $p = @(
+      [CticHist]::Poke('DataDir', $HistDir),
       [CticHist]::Poke('Tags', ($Tags -join ',')),
       [CticHist]::Poke('StartTime', '00:00:00'),
       [CticHist]::Poke('Duration', $Duration),
       [CticHist]::Poke('Interval', $Interval),
       [CticHist]::Poke('FileName', $f))
-    $fmts = @($DateFmt) + @('MM/dd/yy', 'MM/dd/yyyy', 'M/d/yy', 'yyyy/MM/dd') | Select-Object -Unique
+    $fmts = @($DateFmt) + @('M/d/yyyy', 'MM/dd/yyyy', 'MM/dd/yy', 'M/d/yy', 'yyyy/MM/dd') | Select-Object -Unique
     $wf = $false
     foreach ($fmt in $fmts) {
       $p1 = [CticHist]::Poke('StartDate', $d.ToString($fmt, [Globalization.CultureInfo]::InvariantCulture))
