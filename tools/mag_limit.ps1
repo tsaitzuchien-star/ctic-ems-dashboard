@@ -7,9 +7,10 @@
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Set 85    # 寫入 85%，啟用時間設為下一分鐘，讀回確認
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Sp 12.5   # 冰水出水溫度設定 1、2 寫入 12.5°C（只允許 10–14），讀回確認
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Tags A,B   # 只讀任意標籤（不寫入）
+#   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -FanCheck   # 只讀：各樓層送風機「Run=1」與「風速有開」的台數
 #   powershell -ExecutionPolicy Bypass -File mag_limit.ps1 -Test      # 原值-5%，觀察 60 秒，寫回原值
 # 安全限制：只接受 30–100%；每次寫入記錄在 C:\BMS_Export\mag_control.log。
-param([double]$Set = -1, [switch]$Test, [int]$Watch = 60, [string[]]$Tags, [double]$Sp = -1)
+param([double]$Set = -1, [switch]$Test, [int]$Watch = 60, [string[]]$Tags, [double]$Sp = -1, [switch]$FanCheck)
 $ErrorActionPreference = 'Stop'
 $Out = 'C:\BMS_Export'
 $Tag = 'SG_CHU2_Item40035'
@@ -63,7 +64,30 @@ public static class CticDdeW {
 "@
 if (-not ('CticDdeW' -as [type])) { Add-Type -TypeDefinition $src }
 
-if ($Tags) {   # 只讀，不寫入
+if ($FanCheck) {   # 只讀，不寫入
+  $inv = [Globalization.CultureInfo]::InvariantCulture
+  $units = @(Get-Content (Join-Path $Out 'fcu_tags.txt') | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^SG_.*_FCU\d+_Run$' } | ForEach-Object { $_ -replace '_Run$','' })
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  $rv = [CticDdeW]::Read([string[]]@($units | ForEach-Object { "$($_)_Run" }))
+  $on = @(); for ($i = 0; $i -lt $units.Count; $i++) { $d = 0.0; if ([double]::TryParse("$($rv[$i])", [Globalization.NumberStyles]::Float, $inv, [ref]$d) -and $d -gt 0.5) { $on += $units[$i] } }
+  $fv = [CticDdeW]::Read([string[]]@($on | ForEach-Object { "$($_)_Fan_High", "$($_)_Fan_Middle", "$($_)_Fan_Low" }))
+  "送風機 $($units.Count) 台，Run=1 有 $($on.Count) 台，讀取 $([int]$sw.Elapsed.TotalSeconds) 秒"
+  $fl = @{}; $offList = @(); $emptyList = @()
+  for ($i = 0; $i -lt $on.Count; $i++) {
+    $f = $(if ($on[$i] -match '^SG_(B1|\d)F') { $matches[1] } else { '?' })
+    if (-not $fl.ContainsKey($f)) { $fl[$f] = @{ run = 0; fan = 0; off = 0; empty = 0 } }
+    $fl[$f].run++
+    $raw = "$($fv[3*$i]) / $($fv[3*$i+1]) / $($fv[3*$i+2])"
+    $vals = @($fv[3*$i], $fv[3*$i+1], $fv[3*$i+2]) | ForEach-Object { $d = 0.0; if ([double]::TryParse("$_", [Globalization.NumberStyles]::Float, $inv, [ref]$d)) { $d } }
+    if (@($vals).Count -eq 0) { $fl[$f].empty++; $emptyList += "$($on[$i])  [$raw]" }
+    elseif (@($vals | Where-Object { $_ -gt 0.5 }).Count) { $fl[$f].fan++ }
+    else { $fl[$f].off++; $offList += $on[$i] }
+  }
+  foreach ($k in ($fl.Keys | Sort-Object)) { "{0}F  Run=1: {1,3}   風速有開: {2,3}   風速全 0: {3,3}   讀不到: {4,3}" -f $k, $fl[$k].run, $fl[$k].fan, $fl[$k].off, $fl[$k].empty }
+  "風速全 0（前 15 台）："; $offList | Select-Object -First 15 | ForEach-Object { "  $_" }
+  if ($emptyList.Count) { "讀不到（前 5 台）："; $emptyList | Select-Object -First 5 | ForEach-Object { "  $_" } }
+  exit 0
+} elseif ($Tags) {   # 只讀，不寫入
   $Tags = [string[]]@($Tags -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
   $v = [CticDdeW]::Read([string[]]$Tags)
   if ($null -eq $v) { throw 'DDE 連不上 InTouch（WindowViewer 有開嗎？）' }
