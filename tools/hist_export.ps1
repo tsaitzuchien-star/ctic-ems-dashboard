@@ -14,6 +14,7 @@ param(
   [string]$DateFmt = '',              # 空白 = 用 Windows 的簡短日期格式
   [string]$Out = 'C:\BMS_Export\hist',
   [string]$HistDir = 'D:\History',   # 歷史檔資料夾（HistData 的 DataDir）
+  [string]$DbDir = '',                # InTouch 應用程式資料夾（有 tagname.x 的地方；HistData 的 DBDir）；空白＝自動找
   [int]$TimeoutS = 300,
   [switch]$Probe,
   [switch]$Diag
@@ -68,10 +69,21 @@ function Ensure-HistData {
   Start-Sleep -Seconds 5
 }
 
+function Find-DbDir {
+  $cache = Join-Path (Split-Path $Out) 'hist_dbdir.txt'
+  if (Test-Path $cache) { $c = (Get-Content $cache -TotalCount 1).Trim(); if ($c -and (Test-Path (Join-Path $c 'tagname.x'))) { return $c } }
+  Write-Host '尋找 InTouch 應用程式資料夾（tagname.x），第一次要幾分鐘…'
+  $hits = @(Get-ChildItem C:\, D:\ -Recurse -Filter tagname.x -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+  foreach ($h in $hits) { Write-Host ("  找到 {0}  {1:yyyy-MM-dd HH:mm}" -f $h.DirectoryName, $h.LastWriteTime) }
+  if (-not $hits.Count) { throw '找不到 tagname.x，請用 -DbDir 指定 InTouch 應用程式資料夾' }
+  $hits[0].DirectoryName | Out-File $cache -Encoding utf8
+  return $hits[0].DirectoryName
+}
+
 Ensure-HistData
 if (-not [CticHist]::Open('HistData', 'Tagname')) { throw '連不上 HistData（DDE HistData|Tagname）' }
 try {
-  $items = 'DataDir', 'Tags', 'StartDate', 'StartTime', 'Duration', 'Interval', 'FileName', 'WriteFile', 'Error'
+  $items = 'DBDir', 'DataDir', 'Tags', 'StartDate', 'StartTime', 'Duration', 'Interval', 'FileName', 'WriteFile', 'Error'
   if ($Probe) {
     foreach ($i in $items) { $v = [CticHist]::Get($i); "{0,-10} = {1}" -f $i, $(if ($null -eq $v) { '(讀取失敗)' } elseif ($v -eq '') { '(空白)' } else { $v }) }
     "日期格式（Windows 簡短日期）：$([Globalization.CultureInfo]::CurrentCulture.DateTimeFormat.ShortDatePattern)"
@@ -91,6 +103,8 @@ try {
   if (-not $Start -or -not $End) { throw '請給 -Start 與 -End（yyyy-MM-dd），或用 -Probe' }
   if (-not $DateFmt) { $DateFmt = [Globalization.CultureInfo]::CurrentCulture.DateTimeFormat.ShortDatePattern }
   New-Item -ItemType Directory -Force -Path $Out | Out-Null
+  if (-not $DbDir) { $DbDir = Find-DbDir }
+  "InTouch 應用程式資料夾：$DbDir"
   $d = [datetime]::ParseExact($Start, 'yyyy-MM-dd', $null); $e = [datetime]::ParseExact($End, 'yyyy-MM-dd', $null)
   $okN = 0; $failN = 0
   while ($d -le $e) {
@@ -101,6 +115,7 @@ try {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     # 點位欄位叫 Tags（2026-11-06 診斷確認）；日期格式依序試，找到可用的就記住
     $p = @(
+      [CticHist]::Poke('DBDir', $DbDir),
       [CticHist]::Poke('DataDir', $HistDir),
       [CticHist]::Poke('Tags', ($Tags -join ',')),
       [CticHist]::Poke('StartTime', '00:00:00'),
