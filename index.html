@@ -117,7 +117,8 @@
         const ROOMS_URL = EMS_LOCAL ? "/api/ems/rooms.json" : "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/rooms.json";
         const PANEL_ALIAS = { 'EP3D_1': 'EP3D_1_B' };   // 網站盤名 → 監控標籤盤名
         let roomsUpdated = null;
-        let roomsFcu = {};   // 本機版才有：各房間小型送風機 [運轉台數, 台數, 平均室溫, 運轉中平均設定溫度]
+        let roomsFcu = {};
+        let roomsFast = null;   // 本機版才有：各迴路最近約 5 分鐘平均 kW（每分鐘更新），給即時前 10 名用   // 本機版才有：各房間小型送風機 [運轉台數, 台數, 平均室溫, 運轉中平均設定溫度]
 
         function circuitKey(part) {
             const m = part.trim().match(/^(.+?)\s*\((\d+)迴?\)$/);
@@ -289,6 +290,7 @@
                 livePowerData = data.circuits;
                 roomsUpdated = data.updated;
                 roomsFcu = data.fcu || {};
+                roomsFast = data.fast || null;
                 updateHeader();
                 renderCards();
             } catch (e) {
@@ -1094,6 +1096,111 @@
                 </tr></thead><tbody>${body}</tbody></table></div>`;
         }
 
+        // 盤名 → 用途（與 tools/ems_calc.py category() 相同規則）
+        function panelCat(p) {
+            const q = p.startsWith('E') && !p.startsWith('EACMP') ? p.slice(1) : p;
+            if (q.startsWith('LPV') || q.startsWith('MLPV')) return '其他';
+            if (q.startsWith('L')) return '照明';
+            if (q.startsWith('R')) return '插座';
+            if (q.startsWith('SP')) return '空調';
+            if (q.startsWith('P')) return '動力';
+            return '其他';
+        }
+
+        // 即時用電前 10 名：房間（依迴路表加總）＋沒對應到空間的迴路（依盤）＋沒有分路電表的整盤
+        function liveTop10() {
+            const f = roomsFast && roomsFast.kw;
+            if (!f) return null;
+            const used = new Set(), items = [];
+            roomData.forEach(r => {
+                const cats = {}, keys = new Set();
+                Object.entries(r.circuits).forEach(([cat, cs]) => (cs && cs !== '-') && cs.split(' / ').forEach(c => {
+                    const k = circuitKey(c);
+                    if (!k || NO_BRANCH[panelOf(k)] || keys.has(k)) return;
+                    keys.add(k); used.add(k);
+                    if (f[k]) cats[cat] = (cats[cat] || 0) + f[k];
+                }));
+                const kw = Object.values(cats).reduce((a, b) => a + b, 0);
+                if (kw > 0) items.push({ id: r.room_id, who: r.company || '—', cats, kw });
+            });
+            const loose = {};
+            Object.entries(f).forEach(([k, v]) => {
+                if (k.startsWith('#') || k.startsWith('@') || used.has(k)) return;
+                const p = panelOf(k); loose[p] = (loose[p] || 0) + v;
+            });
+            Object.entries(loose).forEach(([p, v]) => items.push({ id: p.replace(/_/g, '-'), who: '未對應空間的迴路', cats: { [panelCat(p)]: v }, kw: v }));
+            if (f['@ESP_2B1_1']) items.push({ id: 'ESP-2B1-1', who: '冷卻水泵 CWP-7/8（盤進線）', cats: { '空調': f['@ESP_2B1_1'] }, kw: f['@ESP_2B1_1'] });
+            const nb = new Set(Object.values(NO_BRANCH));   // 只放沒有分路電表的盤；其他 "#" 是上游總盤，會重複計算
+            Object.entries(f).forEach(([k, v]) => {
+                if (!nb.has(k)) return;
+                const p = k.slice(1);
+                items.push({ id: p.replace(/_/g, '-') + ' 整盤', who: p === 'EACMP_1' ? '空調主機房（無分路電表）' : '無分路電表，多空間共用', cats: { [p === 'EACMP_1' ? '空調' : '其他']: v }, kw: v });
+            });
+            const sum = Object.entries(f).reduce((a, [k, v]) => a + (!k.startsWith('#') || nb.has(k) ? v : 0), 0);
+            items.sort((a, b) => b.kw - a.kw);
+            return { all: items, rows: items.slice(0, 10), sum };
+        }
+
+        // 夜間異常：下班後（平日 19:00–07:30、週末全天）仍在用電、可追蹤是否能關的設備與空間
+        const NIGHT_OK = { 'A315': '綠能所 24 小時緊急應變值班' };   // Cliff 2026-11-06 確認可排除
+        const PLANT_NIGHT = [['#EACMP_1', '空調主機房 EACMP-1 盤'], ['#ACMP_2', '空調主機房 ACMP-2 盤'], ['#ACMP_G1', '空調主機房 ACMP-G1 盤'], ['@ESP_2B1_1', '冷卻水泵 CWP-7/8（ESP-2B1-1 盤）']];
+        function afterHours(now = new Date()) {
+            const m = now.getHours() * 60 + now.getMinutes(), wd = now.getDay();
+            return wd === 0 || wd === 6 || m < 450 || m >= 1140;
+        }
+        function nightAnomalies(t) {
+            const f = roomsFast.kw, out = [];
+            const chu = f['#EACMP_1_CHU2'] || 0;
+            if (chu < 5) PLANT_NIGHT.forEach(([k, name]) => {
+                if ((f[k] || 0) >= 1) out.push({ name, note: '冰機已停，主機房仍在用電：確認冷卻水塔、泵浦或其他設備是否可關', kw: f[k], plant: true });
+            });
+            t.all.forEach(x => {
+                if (x.kw < 1.5 || NIGHT_OK[x.id] || /機房/.test(x.who) || x.id.endsWith('整盤') || x.id === 'ESP-2B1-1') return;
+                const main = Object.entries(x.cats).sort((a, b) => b[1] - a[1])[0];
+                out.push({ name: `${x.id} ${x.who}`, note: `下班後仍有${main ? main[0] : ''}負載`, kw: x.kw });
+            });
+            return out.sort((a, b) => (b.plant ? 1 : 0) - (a.plant ? 1 : 0) || b.kw - a.kw);
+        }
+        function nightHTML(t) {
+            if (!afterHours()) return `<div class="mt-4 pt-3 border-t border-slate-700/60 text-xs text-slate-500"><i class="fa-solid fa-moon mr-1"></i>夜間異常清單在下班後（平日 19:00–07:30、週末）自動列出。</div>`;
+            const a = nightAnomalies(t);
+            const ok = Object.entries(NIGHT_OK).map(([k, v]) => `${k}（${v}）`).join('、');
+            const rows = a.length ? a.map(x => `<li class="flex justify-between gap-3 py-1.5 border-b border-slate-700/40">
+                    <span><span class="font-bold ${x.plant ? 'text-rose-300' : 'text-amber-200'}">${x.name}</span><br><span class="text-xs text-slate-400">${x.note}</span></span>
+                    <span class="font-mono text-white whitespace-nowrap">${fmt(x.kw, 1)} kW</span></li>`).join('')
+                : '<li class="py-2 text-slate-400">目前沒有異常</li>';
+            return `<div class="mt-4 pt-3 border-t border-slate-700/60">
+                <h4 class="text-base font-bold text-amber-300 mb-1"><i class="fa-solid fa-moon mr-2"></i>夜間異常：下班後仍在用電（${a.length} 項）</h4>
+                <p class="text-xs text-slate-400 mb-2">可逐項追蹤是否能在夜間關閉。已排除各機房與 ${ok}。</p>
+                <ul class="text-sm">${rows}</ul></div>`;
+        }
+
+        function top10Card(d) {
+            const t = liveTop10();
+            if (!t) return EMS_LOCAL ? `<div class="col-span-full glass-card p-5 text-sm text-slate-500"><i class="fa-solid fa-spinner fa-spin mr-1"></i>即時用電前 10 名：程式剛啟動，約 5 分鐘後出現</div>` : '';
+            const CC = { '空調': 'text-sky-300', '動力': 'text-red-300', '照明': 'text-yellow-300', '插座': 'text-amber-300', '其他': 'text-slate-400' };
+            const body = t.rows.map((x, i) => {
+                const cs = Object.entries(x.cats).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+                const use = cs.map(([c, v]) => `<span class="${CC[c] || 'text-slate-300'}">${c}${cs.length > 1 ? ' ' + fmt(v, 1) : ''}</span>`).join('<span class="text-slate-600">・</span>');
+                return `<tr class="border-b border-slate-700/50">
+                    <td class="py-2 pr-2 text-slate-500 font-mono">${i + 1}</td>
+                    <td class="py-2 pr-3 font-bold text-white whitespace-nowrap">${x.id}</td>
+                    <td class="py-2 pr-3 text-slate-300">${x.who}</td>
+                    <td class="py-2 pr-3 text-xs">${use}</td>
+                    <td class="py-2 text-right font-mono text-white whitespace-nowrap">${fmt(x.kw, 1)} kW</td></tr>`;
+            }).join('');
+            const total = d && d.now_kw != null ? d.now_kw : null;
+            return `<div class="col-span-full glass-card p-5">
+                <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-ranking-star mr-2 text-rose-400"></i>即時用電前 10 名</h3>
+                <p class="text-xs text-slate-400 mb-3">${roomsFast.from}–${roomsFast.to} 平均（約 ${fmt(roomsFast.min, 0)} 分鐘，每分鐘更新）｜分路電表合計 ${fmt(t.sum, 1)} kW${total != null ? `，總表 ${fmt(total, 0)} kW` : ''}</p>
+                <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-xs text-slate-500 text-left">
+                    <th class="pb-2">#</th><th class="pb-2">空間／盤</th><th class="pb-2">單位</th><th class="pb-2">用途</th><th class="pb-2 text-right">kW</th>
+                </tr></thead><tbody>${body}</tbody></table></div>
+                <p class="text-[11px] text-slate-500 mt-2">分路電表每格 0.1 度，5 分鐘平均約 ±1.2 kW，2 kW 以下排名僅供參考。總表與分路合計的差額，是掛在主配電盤、沒有分路電表的負載。</p>
+                ${nightHTML(t)}
+            </div>`;
+        }
+
         function usageSection(d) {
             if (!roomsUpdated) return '';
             const u = usageByCategory();
@@ -1108,6 +1215,7 @@
                 ${tile('<i class="fa-solid fa-plug mr-1 text-amber-400"></i>插座總用電', fmt(g('插座').kw, 1), 'kW', `今日 ${fmt(g('插座').today)} kWh`, 'border-l-amber-400')}
             </div>
             <p class="col-span-full text-xs text-slate-500 -mt-3">依房間迴路表加總各空間的迴路（最近 15 分鐘平均），同一迴路只算一次；資料時間 ${roomsUpdated}</p>
+            ${EMS_LOCAL ? top10Card(d) : ''}
             <div class="col-span-full grid grid-cols-1 lg:grid-cols-2 gap-6">
                 ${rankTable('辦公室用電前五名', 'fa-solid fa-briefcase', 'text-emerald-400', topRooms('辦公室'))}
                 ${rankTable('實驗室用電前五名', 'fa-solid fa-flask', 'text-blue-400', topRooms('實驗室'))}
