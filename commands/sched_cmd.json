@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-07-fcu-dry1",
+  "id": "2026-11-07-fcu-w1",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-07T21:21:00+08:00",
-  "expires": "2026-11-08T01:21:00+08:00",
-  "note": "B239 送風機試跑：只讀現況，不寫（範例動作：兩台設定 26 °C）",
-  "dry_run": true,
+  "approved_at": "2026-11-07T21:23:53+08:00",
+  "expires": "2026-11-07T22:23:53+08:00",
+  "note": "B239 第一次真實測試（Cliff 核准）：兩台設定 24→26 °C，然後開機",
   "changes": [
-    {"kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "setT", "value": 26}
+    {"kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "setT", "value": 26},
+    {"kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "on"}
   ]
 }
