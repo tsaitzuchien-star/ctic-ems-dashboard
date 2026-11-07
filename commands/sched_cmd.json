@@ -1,10 +1,11 @@
 {
-  "id": "2026-11-07-fcu-w2",
+  "id": "2026-11-07-fcu-w3",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-07T22:05:04+08:00",
-  "expires": "2026-11-07T23:05:04+08:00",
-  "note": "B239 兩台設定 26→24 °C（Cliff 核准）",
+  "approved_at": "2026-11-07T22:07:07+08:00",
+  "expires": "2026-11-07T23:07:07+08:00",
+  "note": "B239 兩台關機（Cliff 核准）；設定 24 °C 再寫一次確保上一筆有生效",
   "changes": [
-    {"kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "setT", "value": 24}
+    {"kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "setT", "value": 24},
+    {"kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "off"}
   ]
 }
