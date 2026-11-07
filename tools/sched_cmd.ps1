@@ -11,7 +11,7 @@
 #   指令要有 id、過期時間（核准後 24 小時內），同一個 id 只做一次。指令裡寫 "dry_run": true 就只檢查、不寫。
 # 送風機（2026-11-07 起）：kind = fcu，只限下面 $FCU_ALLOW 列的房間（目前只有 B239 = SG_2F31_P25）。
 #   {"kind":"fcu","room":"B239","units":["FCU01","FCU02"],"action":"off"|"on"|"setT","value":26}
-#   action off/on 寫 _Run（0/1），寫完約 75 秒內看風速狀態確認；setT 只允許 24–28 °C，立即讀回。
+#   action off/on 寫 _Run（0/1），所有台一起送出，最多等 180 秒看風速狀態確認；setT 只允許 24–28 °C，立即讀回。
 #   平日 18:00–07:00 遠端開啟時，若當晚加班名單檔已存在，把房號加進去，避免 fcu_guard 又把它關掉。
 # 照明（2026-11-07 起，Cliff 授權）：kind = light，只限 B330（InTouch 只有這間有燈控）。
 #   {"kind":"light","room":"B330","circuits":"all" 或 ["EL3C_13","EL3C1_11",...],"action":"on"|"off"}
@@ -224,6 +224,8 @@ function Fcu-AllowAfterHours($room) {
 
 # ---- 讀指令 ----
 if (Test-Path $Off) { exit 0 }
+$mtx = New-Object System.Threading.Mutex($false, 'Global\CTIC_Sched_Cmd')   # 上一輪還在等送風機狀態時，不要重複執行同一筆
+if (-not $mtx.WaitOne(0)) { exit 0 }
 $raw = $null
 if ($File) { $raw = Get-Content $File -Raw -Encoding utf8 }
 else {
@@ -273,6 +275,8 @@ foreach ($c in $changes) {
   if ("$($c.kind)" -eq 'fcu') {
     $panel = $FCU_ALLOW["$($c.room)"]; $act = "$($c.action)"
     $what = $(if ($act -eq 'off') { '關閉' } elseif ($act -eq 'on') { '開啟' } else { "設定 $($c.value)°C" })
+    # 先讀全部台數的現況；setT 逐台寫並讀回；on/off 一次對所有台送出，再一起等風速狀態（現場實測：狀態回報比實際慢 60–100 秒以上）
+    $pend = @()
     foreach ($u in @($c.units)) {
       $label = "$($c.room) $u"
       $before = Fcu-Read $panel $u
@@ -287,11 +291,23 @@ foreach ($c in $changes) {
       } else {
         $want = $(if ($act -eq 'off') { 0 } else { 1 })
         $null = [CticDdeW]::Poke("$($panel)_$($u)_Run", "$want")
-        $after = $null
-        for ($k = 0; $k -lt 15; $k++) { Start-Sleep -Seconds 5; $after = Fcu-Read $panel $u; if ($null -ne $after -and $after.fan -eq $want) { break } }
-        if ($null -ne $after -and $after.fan -eq $want) { $res.lines += "$label：$(Fcu-Text $before) → $what ✅" }
-        elseif ($null -ne $after -and [int]$after.run -eq $want) { $res.lines += "$label：已送出$what（運轉指令已是 $want），風速狀態 75 秒內還沒更新，請稍後再看 ⚠️" }
-        else { $allOk = $false; $res.lines += "$label：送出$what後讀回不符（$(Fcu-Text $after)）❌" }
+        $pend += [pscustomobject]@{ u = $u; label = $label; before = $before; after = $null; ok = $false; t0 = Get-Date }
+      }
+    }
+    if ($pend.Count) {
+      $want = $(if ($act -eq 'off') { 0 } else { 1 })
+      for ($k = 0; $k -lt 36; $k++) {                      # 最多等 180 秒
+        Start-Sleep -Seconds 5
+        foreach ($p in @($pend | Where-Object { -not $_.ok })) {
+          $p.after = Fcu-Read $panel $p.u
+          if ($null -ne $p.after -and $p.after.fan -eq $want) { $p.ok = $true; $p | Add-Member -NotePropertyName sec -NotePropertyValue ([int]((Get-Date) - $p.t0).TotalSeconds) -Force }
+        }
+        if (-not @($pend | Where-Object { -not $_.ok }).Count) { break }
+      }
+      foreach ($p in $pend) {
+        if ($p.ok) { $res.lines += "$($p.label)：$(Fcu-Text $p.before) → $what ✅（狀態 $($p.sec) 秒回報）" }
+        elseif ($null -ne $p.after -and [int]$p.after.run -eq $want) { $res.lines += "$($p.label)：已送出$what（運轉指令已是 $want），風速狀態 3 分鐘內還沒更新，請稍後再看 ⚠️" }
+        else { $allOk = $false; $res.lines += "$($p.label)：送出$what後讀回不符（$(Fcu-Text $p.after)）❌" }
       }
     }
     if (-not $DryRun -and $act -eq 'on') { $x = Fcu-AllowAfterHours "$($c.room)"; if ($x) { $res.lines += $x } }
