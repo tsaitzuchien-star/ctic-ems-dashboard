@@ -9,6 +9,7 @@
 5. 製冰／磁浮防超約（2026-11-07）：製冰主機 BCU-1 在白天（07:30–22:00）運轉就立刻推播（磁浮同時開會寫出來），
    夏月平日 16:00–22:00 磁浮還在轉也推播；製冰／融冰／磁浮排程一被修改就推播新舊值與檢查結果；
    每天 21:30 檢查今晚製冰與明天融冰／磁浮排程，有問題才推播。全部只讀，不會去動任何設備。
+6. 排程指令信箱（sched_cmd.ps1）的執行結果：已執行／被擋下／沒完成，每筆推一次。
 為了守住免費方案每月 200 則（則數 × 好友人數），每天最多推 MAX_PER_DAY 則（摘要不受限）。
 
 測試：python line_push.py --test   （先印出方案上限／本月已用／好友數，再送一則測試訊息）
@@ -91,6 +92,7 @@ ICE_REPEAT_MIN, ICE_REPEAT_MAX = 10, 3      # 白天製冰沒停：每 10 分鐘
 SCHED_CHECK_AT = "21:30"       # 每天檢查今晚製冰與明天融冰／磁浮排程（製冰通常 23:55 開始）
 WD = "一二三四五六日"
 SCHED_NAMES = {"ice": "製冰", "melt": "融冰", "chu2": "磁浮"}
+CMD_RESULT = r"\\10.10.2.4\AC_Export\sched_cmd_result.json"   # 空調監控主機 sched_cmd.ps1（指令信箱）的執行結果
 
 
 def is_summer(d):
@@ -205,7 +207,7 @@ class Notifier:
             with open(TOKEN_FILE, encoding="utf-8") as f:
                 self.token = f.read().strip() or None
         self.state = {"day": None, "count": 0, "sent_levels": {}, "faults": {}, "last_mag_action": None,
-                      "summary": {}, "days": {}, "ice": {}, "sched": None, "sched_check": None}
+                      "summary": {}, "days": {}, "ice": {}, "sched": None, "sched_check": None, "cmd_seen": None}
         try:
             with open(STATE_FILE, encoding="utf-8") as f:
                 self.state.update(json.load(f))
@@ -407,6 +409,32 @@ class Notifier:
             else:
                 self._save()
 
+    def _cmd_result(self, now):
+        """指令信箱執行結果：每個指令 id＋狀態只推一次。每 30 秒看一次檔案。"""
+        if (now - getattr(self, "_cmd_at", dt.datetime.min)).total_seconds() < 30:
+            return
+        self._cmd_at = now
+        try:
+            with open(CMD_RESULT, encoding="utf-8-sig") as f:
+                r = json.load(f)
+        except (OSError, ValueError):
+            return
+        key = f"{r.get('id')}|{r.get('status')}"
+        if not r.get("id") or key == self.state.get("cmd_seen"):
+            return
+        first = self.state.get("cmd_seen") is None
+        self.state["cmd_seen"] = key
+        if first and r.get("time", "")[:10] != now.date().isoformat():
+            self._save()
+            return                                   # 第一次啟動時不重推以前的舊結果
+        head = {"done": "✅ 排程指令已執行", "rejected": "⛔ 排程指令被擋下（沒有寫入）",
+                "failed": "❌ 排程指令沒有完成", "dry_run": "🧪 排程指令試跑（只檢查，沒有寫入）"}.get(r.get("status"), "排程指令")
+        lines = r.get("lines") or []
+        if isinstance(lines, str):
+            lines = [lines]
+        self._push(f"{head}（{r.get('time', '')[11:16]}，編號 {r.get('id')}）\n" + "\n".join(lines[:12]) +
+                   (f"\n說明：{r['note']}" if r.get("note") else ""), force=True)
+
     def tick(self, now, live_ok, snap, ac, mag, ems):
         if not self.enabled:
             return
@@ -438,6 +466,7 @@ class Notifier:
             if ac:
                 self._ice_guard(now, ac, snap if live_ok else None)
                 self._sched_guard(now, ac)
+            self._cmd_result(now)
             self._summary(now, snap, ems, mag)
             if (now - self.saved_at).total_seconds() >= 300:
                 self.saved_at = now
