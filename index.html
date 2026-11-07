@@ -490,6 +490,12 @@
                     <div class="lg:col-span-2"><p class="text-xs text-slate-400 mb-1">今天每 15 分鐘：外氣溫度（°C）、送風機運轉台數、磁浮平均負載（%）</p><div class="h-48"><canvas id="rtFcu"></canvas></div></div>
                 </div>
                 <div class="mt-4 overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-slate-400 border-b border-slate-700"><th class="pb-2">棟／樓</th><th class="pb-2 text-right">運轉／台數</th><th class="pb-2 text-right">平均室溫</th><th class="pb-2 text-right">運轉中設定</th></tr></thead><tbody id="rt-fcugroups"></tbody></table></div></div>
+            <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-lightbulb mr-2 text-yellow-300"></i>照明監控（B330）</h3>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div>${rtRow('亮燈迴路', 'rt-lighton')}${rtRow('A 區總開關', 'rt-lighta')}${rtRow('B 區總開關', 'rt-lightb')}
+                        <p class="text-xs text-slate-500 mt-2">每分鐘讀一次空調監控主機 InTouch。顯示的是燈控指令狀態（InTouch 沒有現場回授點），遠端開關燈用手機指令信箱。園區其他照明沒有接監控。</p></div>
+                    <div class="lg:col-span-2"><div id="rt-lightgrid" class="grid grid-cols-3 sm:grid-cols-6 gap-2 text-xs"></div></div>
+                </div></div>
             <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-chart-column mr-2 text-amber-400"></i>今日各 15 分鐘需量</h3><div class="h-48"><canvas id="rtBars"></canvas></div></div>`;
             const opt = { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { maxTicksLimit: 8 } } } };
             rtCharts.push(new Chart(document.getElementById('rtTrend'), { type: 'line', data: { labels: [], datasets: [
@@ -841,6 +847,7 @@
                 // 正確算法：Q(kW)=流量 m³/h×1.163×(回水−出水)；RT=Q/3.517；COP=Q/冰機 kW；kW/RT=冰機 kW/RT（中控畫面的公式少除 3.517、溫差為固定值）
                 { const kwe = (a.mag_c1_kw || 0) + (a.mag_c2_kw || 0), dT = (a.mag_chwr_c ?? 0) - (a.mag_chws_c ?? 0), q = (a.flow_m3h || 0) * 1.163 * dT, rtn = q / 3.517;
                   rtSet('rt-cop', kwe > 5 && dT > 0.5 && q > 0 ? `${fmt(q / kwe, 2)}／${fmt(kwe / rtn, 2)} <span class="text-xs text-slate-400">（${fmt(rtn, 0)} RT・溫差 ${fmt(dT, 1)}°C）</span>` : '<span class="text-slate-400">冰機未運轉</span>'); }
+                updateLight(a.light);
                 rtPct('rt-ice1', a.ice01_pct); rtPct('rt-ice2', a.ice02_pct);
                 rtSet('rt-tank', `${fmt(a.tank_out_c, 1)}／${fmt(a.tank_in_c, 1)}`); rtSet('rt-icesp', fmt(a.ice_low_sp, 0)); rtSet('rt-bcut', `${fmt(a.bcu_chws_c, 1)}／${fmt(a.bcu_chwr_c, 1)}`);
                 rtSet('rt-flow', fmt(a.flow_m3h, 1)); rtSet('rt-flowtot', fmt(a.flow_tot_m3, 0));
@@ -948,6 +955,15 @@
             }
         }
 
+        function updateLight(L) {
+            if (!document.getElementById('rt-lightgrid')) return;
+            if (!L || !L.circuits) { rtSet('rt-lighton', '<span class="text-slate-400">讀不到（空調監控主機 ac_logger 要更新）</span>'); rtSet('rt-lightgrid', ''); return; }
+            const cs = Object.entries(L.circuits), on = cs.filter(([, v]) => v === 1).length, sw = v => v == null ? '—' : v ? '<span class="text-yellow-300">開</span>' : '<span class="text-slate-400">關</span>';
+            rtSet('rt-lighton', `<span class="${on ? 'text-yellow-300' : 'text-slate-300'}">${on}</span>／${cs.length} 迴路`);
+            rtSet('rt-lighta', sw(L.a_all)); rtSet('rt-lightb', sw(L.b_all));
+            rtSet('rt-lightgrid', cs.map(([k, v]) => `<div class="rounded-lg px-2 py-1.5 text-center font-mono border ${v === 1 ? 'bg-yellow-300 border-yellow-200 text-slate-900 font-bold' : v === 0 ? 'bg-slate-800 border-slate-600 text-slate-500' : 'bg-slate-900 border-slate-800 text-slate-600'}"><i class="${v === 1 ? 'fa-solid' : 'fa-regular'} fa-lightbulb mr-1"></i>${k}<div class="text-sm">${v === 1 ? '亮' : v === 0 ? '滅' : '讀不到'}</div></div>`).join('')
+                + '<div class="col-span-full text-slate-400 mt-1"><span class="inline-block w-3 h-3 rounded bg-yellow-300 align-middle mr-1"></span>亮（開）　<span class="inline-block w-3 h-3 rounded bg-slate-800 border border-slate-600 align-middle mr-1"></span>滅（關）</div>');
+        }
         function updateFcu(d, chart) {
             const f = d.fcu;
             if (!f) { rtSet('rt-fcunote', '<span class="text-amber-300">還沒有送風機資料（空調監控主機每 5 分鐘記錄一次）</span>'); return; }

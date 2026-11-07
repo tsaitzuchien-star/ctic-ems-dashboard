@@ -124,6 +124,18 @@ $schedTags.Add('SGB1DC51_BCU_Run')
 $schedTags = [string[]]$schedTags.ToArray()
 $script:lastSched = $null
 
+# B330 照明（2026-11-07，Cliff 要在即時監控看）：只讀。A/B 區總開關＋18 迴路的 _LIGHT_DO（指令值；DI 指向同一點，不是現場回授）。
+$LightCircuits = @('EL3C_13','EL3C_14','EL3C_15','EL3C_16','EL3C_17','EL3C_18','EL3C_19',
+                   'EL3C1_11','EL3C1_12','EL3C1_13','EL3C1_14','EL3C1_15','EL3C1_16','EL3C1_17','EL3C1_18','EL3C1_19','EL3C1_20','EL3C1_21')
+$lightTags = [string[]](@('Light_B330_A_ALL_ONOFF','Light_B330_B_ALL_ONOFF') + @($LightCircuits | ForEach-Object { "Light_B330_$($_)_LIGHT_DO" }))
+function Read-Light {
+  $lv = [CticDde]::Read($lightTags, [uint32]1500, 10000)
+  if ($null -eq $lv) { return $null }
+  $n = @($lv | ForEach-Object { $x = 0.0; if ([double]::TryParse("$_", [Globalization.NumberStyles]::Float, $inv, [ref]$x)) { [int]$x } else { $null } })
+  $c = [ordered]@{}; for ($i = 0; $i -lt $LightCircuits.Count; $i++) { $c[$LightCircuits[$i]] = $n[2 + $i] }
+  return [ordered]@{ room = 'B330'; a_all = $n[0]; b_all = $n[1]; circuits = $c }
+}
+
 function Read-Sched {
   $sv = [CticDde]::Read($schedTags, [uint32]1500, 15000)
   if ($null -eq $sv) { return $null }
@@ -191,6 +203,8 @@ function Read-Once {
     } catch { "$(Get-Date -f s) PLANT $($_.Exception.Message)" | Out-File (Join-Path $Out 'ac_logger.log') -Append -Encoding utf8 }
     try { $sc = Read-Sched; if ($null -ne $sc) { $j['sched'] = $sc } }
     catch { "$(Get-Date -f s) SCHED $($_.Exception.Message)" | Out-File (Join-Path $Out 'ac_logger.log') -Append -Encoding utf8 }
+    try { $lt = Read-Light; if ($null -ne $lt) { $j['light'] = $lt } }
+    catch { "$(Get-Date -f s) LIGHT $($_.Exception.Message)" | Out-File (Join-Path $Out 'ac_logger.log') -Append -Encoding utf8 }
   }
   $tmp = Join-Path $Out 'ac_latest.tmp'
   ($j | ConvertTo-Json -Compress -Depth 6) | Out-File $tmp -Encoding ascii
