@@ -13,6 +13,9 @@
 #   {"kind":"fcu","room":"B239","units":["FCU01","FCU02"],"action":"off"|"on"|"setT","value":26}
 #   action off/on 寫 _Run（0/1），寫完約 75 秒內看風速狀態確認；setT 只允許 24–28 °C，立即讀回。
 #   平日 18:00–07:00 遠端開啟時，若當晚加班名單檔已存在，把房號加進去，避免 fcu_guard 又把它關掉。
+# 照明（2026-11-07 起，Cliff 授權）：kind = light，只限 B330（InTouch 只有這間有燈控）。
+#   {"kind":"light","room":"B330","circuits":"all" 或 ["EL3C_13","EL3C1_11",...],"action":"on"|"off"}
+#   寫各迴路 Light_B330_<迴路>_LIGHT_DO（1 亮 / 0 滅），3 秒後讀回 DO 和 DI。A/B 區總開關只讀不寫。
 # 停用：在 C:\BMS_Export 放 sched_cmd_off.txt。
 # 結果：C:\BMS_Export\sched_cmd_result.json（監控電腦讀到後推 LINE）與 sched_cmd.log。
 # 測試：powershell -ExecutionPolicy Bypass -File C:\BMS_Export\sched_cmd.ps1 -File 某指令.json -DryRun   （只檢查、不寫）
@@ -31,6 +34,9 @@ $WD = '一二三四五六日'
 $ICE_OK_FROM = '22:00'; $ICE_OK_TO = '07:30'
 $FCU_ALLOW = @{ 'B239' = 'SG_2F31_P25' }     # 房號 → InTouch 面板（Cliff 授權的房間才放進來）
 $FCU_SET_MIN = 24; $FCU_SET_MAX = 28
+$LIGHT_ROOM = 'B330'
+$LIGHT_CIRCUITS = @('EL3C_13','EL3C_14','EL3C_15','EL3C_16','EL3C_17','EL3C_18','EL3C_19',
+                    'EL3C1_11','EL3C1_12','EL3C1_13','EL3C1_14','EL3C1_15','EL3C1_16','EL3C1_17','EL3C1_18','EL3C1_19','EL3C1_20','EL3C1_21')
 
 $src = @"
 using System; using System.Runtime.InteropServices; using System.Text;
@@ -91,6 +97,35 @@ function Day-Label($d) { $n = 0; if ([int]::TryParse("$d", [ref]$n) -and $n -ge 
 function Hm-Ok($x) { return ("$x" -match '^([01]\d|2[0-3]):[0-5]\d$') }
 function Is-Summer($t) { $md = $t.Month * 100 + $t.Day; return ($md -ge 516 -and $md -le 1015) }
 
+function Light-Circuits($c) {
+  if ("$($c.circuits)" -eq 'all') { return $LIGHT_CIRCUITS }
+  $cs = @($c.circuits | ForEach-Object { "$_" })
+  if ($cs.Count -lt 1) { return $null }
+  foreach ($x in $cs) { if ($LIGHT_CIRCUITS -notcontains $x) { return $null } }
+  return $cs
+}
+function Light-Read($cs) {
+  # 回傳 @{ dov = @{迴路=值}; div = @{...}; a = A區總開關; b = B區總開關 }
+  $tags = @('Light_B330_A_ALL_ONOFF', 'Light_B330_B_ALL_ONOFF')
+  foreach ($x in $cs) { $tags += "Light_B330_$($x)_LIGHT_DO"; $tags += "Light_B330_$($x)_LIGHT_DI" }
+  $v = [CticDdeW]::Read([string[]]$tags, 3000, 30000)
+  if ($null -eq $v) { return $null }
+  $nv = @($v | ForEach-Object { $x = 0.0; if ([double]::TryParse("$_", [Globalization.NumberStyles]::Float, $inv, [ref]$x)) { "$([int]$x)" } else { '?' } })
+  $r = @{ a = $nv[0]; b = $nv[1]; dov = [ordered]@{}; div = [ordered]@{} }
+  for ($i = 0; $i -lt $cs.Count; $i++) { $r.dov[$cs[$i]] = $nv[2 + 2 * $i]; $r.div[$cs[$i]] = $nv[3 + 2 * $i] }
+  return $r
+}
+function Light-Text($r, $cs) {
+  if ($null -eq $r) { return '讀不到' }
+  $on = @($cs | Where-Object { $r.dov[$_] -eq '1' }); $unk = @($cs | Where-Object { $r.dov[$_] -ne '1' -and $r.dov[$_] -ne '0' })
+  $t = "亮 $($on.Count)／$($cs.Count) 迴路"
+  if ($on.Count -gt 0 -and $on.Count -lt $cs.Count) { $t += "（亮：$($on -join ', ')）" }
+  if ($unk.Count) { $t += "（讀不到：$($unk -join ', ')）" }
+  $di = @($cs | Where-Object { $r.div[$_] -ne $r.dov[$_] })
+  if ($di.Count) { $t += "（回授和指令不同：$($di -join ', ')）" }
+  return "$t；A區總開關 $($r.a)、B區總開關 $($r.b)"
+}
+
 function Check-Change($c, $now) {
   # 回傳 $null = 通過；否則回傳擋下的原因
   if ("$($c.kind)" -eq 'fcu') {
@@ -106,7 +141,14 @@ function Check-Change($c, $now) {
     }
     return $null
   }
-  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu）" }
+  if ("$($c.kind)" -eq 'light') {
+    if ("$($c.room)" -ne $LIGHT_ROOM) { return "照明房間 $($c.room) 不在授權清單（只有 $LIGHT_ROOM）" }
+    if (@('off','on') -notcontains "$($c.action)") { return "照明動作 $($c.action) 不對（off / on）" }
+    $cs = Light-Circuits $c
+    if ($null -eq $cs) { return "照明迴路不對（要 all 或 $($LIGHT_CIRCUITS -join ',') 其中幾個）" }
+    return $null
+  }
+  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light）" }
   $d = 0; if (-not [int]::TryParse("$($c.day)", [ref]$d) -or $d -lt 1 -or $d -gt 7) { return "星期 $($c.day) 不對（1–7）" }
   if (-not (Hm-Ok $c.on) -or -not (Hm-Ok $c.off)) { return "時間格式不對（$($c.on)–$($c.off)，要 HH:MM）" }
   if ("$($c.en)" -ne '0' -and "$($c.en)" -ne '1') { return "勾選 en 只能 0 或 1" }
@@ -219,7 +261,7 @@ if (($exp - $apv).TotalHours -gt 24) { $res.status = 'rejected'; $res.lines = @(
 $changes = @($cmd.changes)
 if ($changes.Count -lt 1 -or $changes.Count -gt 21) { $res.status = 'rejected'; $res.lines = @('沒有要改的項目，或一次超過 21 筆'); Save-Result $res; exit 0 }
 $why = @()
-foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if ("$($c.kind)" -eq 'fcu') { "$($c.room) $e" } else { "$(Day-Label $c.day) $e" }) } }
+foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } else { "$(Day-Label $c.day) $e" }) } }
 if ($why.Count) { $res.status = 'rejected'; $res.lines = @('整筆指令沒有執行：') + $why; Save-Result $res; exit 0 }
 
 # ---- 寫入（WindowViewer 要開著） ----
@@ -253,6 +295,20 @@ foreach ($c in $changes) {
       }
     }
     if (-not $DryRun -and $act -eq 'on') { $x = Fcu-AllowAfterHours "$($c.room)"; if ($x) { $res.lines += $x } }
+    continue
+  }
+  if ("$($c.kind)" -eq 'light') {
+    $cs = @(Light-Circuits $c); $act = "$($c.action)"; $want = $(if ($act -eq 'on') { '1' } else { '0' })
+    $what = $(if ($act -eq 'on') { '開燈' } else { '關燈' }); $label = "B330 照明"
+    $before = Light-Read $cs
+    if ($null -eq $before) { $allOk = $false; $res.lines += "$label：讀不到照明點位，沒有寫入 ❌"; continue }
+    if ($DryRun) { $res.lines += "$label：目前 $(Light-Text $before $cs) → $what（試跑，沒寫）"; continue }
+    foreach ($x in $cs) { $null = [CticDdeW]::Poke("Light_B330_$($x)_LIGHT_DO", $want) }
+    Start-Sleep -Seconds 3
+    $after = Light-Read $cs
+    $bad = @(); if ($null -ne $after) { $bad = @($cs | Where-Object { $after.dov[$_] -ne $want }) }
+    if ($null -ne $after -and $bad.Count -eq 0) { $res.lines += "$label：$what ✅ 現在 $(Light-Text $after $cs)" }
+    else { $allOk = $false; $res.lines += "$label：送出$what後讀回不符（$(Light-Text $after $cs)）❌" }
     continue
   }
   $tags = Tags $c; $want = Want $c
