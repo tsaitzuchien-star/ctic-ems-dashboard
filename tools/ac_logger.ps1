@@ -1,6 +1,7 @@
 ﻿# 中創園區 空調監控主機 唯讀記錄程式 (ac_logger.ps1)
 # 每 60 秒用 DDE 向本機 InTouch WindowViewer 讀取冰桶/磁浮/BCU 點位，只讀不寫。
 # 輸出：C:\BMS_Export\AC_yyyy-MM-dd.csv (每分鐘一列) 與 C:\BMS_Export\ac_latest.json
+# 另每分鐘讀製冰／融冰／磁浮排程 → ac_latest.json 的 sched（2026-11-07）
 # 另每分鐘讀冰水機房泵浦/水塔/溫度/差壓與空調箱狀態 → ac_latest.json 的 plant 與 PLANT_yyyy-MM-dd.csv（2026-11-06）
 # 另外每 5 分鐘讀 fcu_tags.txt 列出的外氣溫溼度與全部小型送風機（運轉、室溫、設定溫度、冷水閥），
 # 輸出 C:\BMS_Export\FCU_yyyy-MM-dd.csv（每 5 分鐘一列）。
@@ -108,6 +109,53 @@ foreach ($b in 'PAH_131_BTU01','AHU121_122_BTU01','PAH121_122_BTU01','PAH_111_BT
 foreach ($t in 'SG_CHU2_Item30017','SG_CHU2_Item30019','SG_CHU2_Item30007','CHSYS_FLOW_TOT','CHSYS_B1F_BTU11_Heat_Acc','CHSYS_B1F_BTU12_Heat_Acc') { $plantTags.Add($t) }
 $plantTags = [string[]]$plantTags.ToArray()
 
+# 製冰／融冰／磁浮排程（2026-11-07，防止製冰主機和磁浮同時開造成超約）：只讀。
+# InTouch 排程標籤：BCU_SCHI = BCU 製冰、BCU_SCHW = BCU 融冰、CHU2_SCH = 磁浮；_01 = 星期一 … _07 = 星期日。
+# 另讀 BCU 啟動/停止命令。結果放進 ac_latest.json 的 sched，排程有變動時記到 sched_changes.log（誰改的看不到，但看得到幾點改的）。
+$schedTags = [Collections.Generic.List[string]]::new()
+foreach ($p in 'BCU_SCHI','BCU_SCHW','CHU2_SCH') {
+  foreach ($n in 1..7) {
+    $dd = '{0:00}' -f $n
+    foreach ($f in 'StartHH','StartMM','StopHH','StopMM') { $schedTags.Add("$($p)_$($dd)_$f") }
+    $schedTags.Add("$($p)_$($dd)SCHEn")
+  }
+}
+$schedTags.Add('SGB1DC51_BCU_Run')
+$schedTags = [string[]]$schedTags.ToArray()
+$script:lastSched = $null
+
+function Read-Sched {
+  $sv = [CticDde]::Read($schedTags, [uint32]1500, 15000)
+  if ($null -eq $sv) { return $null }
+  $num = @{}
+  for ($i=0; $i -lt $schedTags.Count; $i++) {
+    $x = 0.0
+    if ([double]::TryParse($sv[$i], [Globalization.NumberStyles]::Float, $inv, [ref]$x)) { $num[$schedTags[$i]] = $x }
+  }
+  $o = [ordered]@{}
+  foreach ($k in @(@('ice','BCU_SCHI'), @('melt','BCU_SCHW'), @('chu2','CHU2_SCH'))) {
+    $days = [ordered]@{}
+    foreach ($n in 1..7) {
+      $dd = '{0:00}' -f $n; $p = $k[1]
+      $h1 = $num["$($p)_$($dd)_StartHH"]; $m1 = $num["$($p)_$($dd)_StartMM"]
+      $h2 = $num["$($p)_$($dd)_StopHH"];  $m2 = $num["$($p)_$($dd)_StopMM"]; $en = $num["$($p)_$($dd)SCHEn"]
+      $days["$n"] = [ordered]@{
+        on  = $(if ($null -ne $h1 -and $null -ne $m1) { '{0:00}:{1:00}' -f [int]$h1, [int]$m1 } else { $null })
+        off = $(if ($null -ne $h2 -and $null -ne $m2) { '{0:00}:{1:00}' -f [int]$h2, [int]$m2 } else { $null })
+        en  = $(if ($null -ne $en) { [int]$en } else { $null })
+      }
+    }
+    $o[$k[0]] = $days
+  }
+  $o['bcu_run'] = $num['SGB1DC51_BCU_Run']
+  $txt = ($o | ConvertTo-Json -Compress -Depth 5)
+  if ($null -ne $script:lastSched -and $txt -ne $script:lastSched) {
+    "$(Get-Date -f 'yyyy-MM-dd HH:mm:ss') $txt" | Out-File (Join-Path $Out 'sched_changes.log') -Append -Encoding utf8
+  }
+  $script:lastSched = $txt
+  return $o
+}
+
 function Read-Once {
   $now = Get-Date
   $v = [CticDde]::Read($tags)
@@ -141,9 +189,11 @@ function Read-Once {
         ((@($ts) + $row) -join ',') | Out-File $pf -Append -Encoding ascii
       }
     } catch { "$(Get-Date -f s) PLANT $($_.Exception.Message)" | Out-File (Join-Path $Out 'ac_logger.log') -Append -Encoding utf8 }
+    try { $sc = Read-Sched; if ($null -ne $sc) { $j['sched'] = $sc } }
+    catch { "$(Get-Date -f s) SCHED $($_.Exception.Message)" | Out-File (Join-Path $Out 'ac_logger.log') -Append -Encoding utf8 }
   }
   $tmp = Join-Path $Out 'ac_latest.tmp'
-  ($j | ConvertTo-Json -Compress) | Out-File $tmp -Encoding ascii
+  ($j | ConvertTo-Json -Compress -Depth 6) | Out-File $tmp -Encoding ascii
   Move-Item -Force $tmp (Join-Path $Out 'ac_latest.json')
   return "$ts viewer_ok=$ok"
 }
