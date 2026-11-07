@@ -1,10 +1,10 @@
 {
-  "id": "2026-11-07-light-on1",
+  "id": "2026-11-07-fcu-w2",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-07T21:49:37+08:00",
-  "expires": "2026-11-07T22:49:37+08:00",
-  "note": "B330 照明實測第二步（Cliff 在現場）：18 個迴路全開",
+  "approved_at": "2026-11-07T22:05:04+08:00",
+  "expires": "2026-11-07T23:05:04+08:00",
+  "note": "B239 兩台設定 26→24 °C（Cliff 核准）",
   "changes": [
-    {"kind": "light", "room": "B330", "circuits": "all", "action": "on"}
+    {"kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "setT", "value": 24}
   ]
 }
