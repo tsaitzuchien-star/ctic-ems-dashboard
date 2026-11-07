@@ -6,6 +6,10 @@
 2. 磁浮自動控制（mag_auto.ps1 -Live）實際寫入時：時間、調到幾 %、原因。
 3. 系統異常與恢復：讀不到 InTouch、空調監控主機資料超過 10 分鐘沒更新、自動控制程式沒回應、「是否啟用」被取消。
 4. 每日摘要：08:00（昨天）、19:10（今天）。
+5. 製冰／磁浮防超約（2026-11-07）：製冰主機 BCU-1 在白天（07:30–22:00）運轉就立刻推播（磁浮同時開會寫出來），
+   夏月平日 16:00–22:00 磁浮還在轉也推播；製冰／融冰／磁浮排程一被修改就推播新舊值與檢查結果；
+   每天 21:30 檢查今晚製冰與明天融冰／磁浮排程，有問題才推播。全部只讀，不會去動任何設備。
+6. 排程指令信箱（sched_cmd.ps1）的執行結果：已執行／被擋下／沒完成，每筆推一次。
 為了守住免費方案每月 200 則（則數 × 好友人數），每天最多推 MAX_PER_DAY 則（摘要不受限）。
 
 測試：python line_push.py --test   （先印出方案上限／本月已用／好友數，再送一則測試訊息）
@@ -80,6 +84,118 @@ def send(text, token):
             pass
 
 
+# ---- 製冰／磁浮防超約（只讀檢查） ----
+ICE_ON_KW = 30.0               # BCU-1 超過這個值算製冰中（製冰約 240 kW，待機只有零點幾 kW）
+MAG_ON_KW = 10.0               # 磁浮兩台壓縮機合計超過這個值算運轉中
+ICE_OK_FROM, ICE_OK_TO = "22:00", "07:30"   # 允許製冰的時段（跨午夜）；以外就是白天，會和上班空調疊在一起
+ICE_REPEAT_MIN, ICE_REPEAT_MAX = 10, 3      # 白天製冰沒停：每 10 分鐘再推一次，最多 3 次
+SCHED_CHECK_AT = "21:30"       # 每天檢查今晚製冰與明天融冰／磁浮排程（製冰通常 23:55 開始）
+WD = "一二三四五六日"
+SCHED_NAMES = {"ice": "製冰", "melt": "融冰", "chu2": "磁浮"}
+CMD_RESULT = r"\\10.10.2.4\AC_Export\sched_cmd_result.json"   # 空調監控主機 sched_cmd.ps1（指令信箱）的執行結果
+
+
+def is_summer(d):
+    return (5, 16) <= (d.month, d.day) <= (10, 15)
+
+
+def ice_running(ac):
+    kw = ac.get("bcu_kw")
+    if kw is not None:
+        return kw >= ICE_ON_KW, kw
+    return ac.get("bcu_st") == 1, None
+
+
+def mag_kw(ac):
+    a, b = ac.get("mag_c1_kw"), ac.get("mag_c2_kw")
+    if a is None and b is None:
+        return None
+    return (a or 0) + (b or 0)
+
+
+def in_ice_window(hm):
+    return hm >= ICE_OK_FROM or hm < ICE_OK_TO
+
+
+def _hm_ok(x):
+    try:
+        h, m = x.split(":")
+        return 0 <= int(h) <= 23 and 0 <= int(m) <= 59
+    except (AttributeError, ValueError):
+        return False
+
+
+def _entry(sched, kind, wd):
+    """wd = Python weekday（0 = 星期一）。回傳 InTouch 該天排程 {on, off, en} 或 None。"""
+    return ((sched or {}).get(kind) or {}).get(str(wd + 1))
+
+
+def _fmt(e):
+    if not e:
+        return "讀不到"
+    return f"{e.get('on')}–{e.get('off')}{'（有勾）' if e.get('en') == 1 else '（沒勾）'}"
+
+
+def ice_entry_problem(e):
+    """製冰排程有勾、但開始或結束時間跑進 07:30–22:00 → 回傳說明。"""
+    if not e or e.get("en") != 1:
+        return None
+    on, off = e.get("on"), e.get("off")
+    if not (_hm_ok(on) and _hm_ok(off)):
+        return f"時間數值異常（{on}–{off}）"
+    if off <= on:                                   # 跨午夜，例如 23:55–07:00
+        bad = on < ICE_OK_FROM or off > ICE_OK_TO
+    else:                                           # 同一天內，例如 00:30–06:00 或 13:00–15:00
+        bad = not (on >= ICE_OK_FROM or off <= ICE_OK_TO)
+    if bad:
+        return f"{on}–{off} 跑進白天（{ICE_OK_TO}–{ICE_OK_FROM}），會和上班空調、磁浮同時開"
+    return None
+
+
+def sched_problems(sched, now, nightly=False):
+    """檢查今晚製冰與明天融冰／磁浮排程，回傳問題清單（字串）。nightly=True 才報「該做沒做」類的提醒。"""
+    out = []
+    if not sched:
+        return out
+    for wd in range(7):                             # 任何一天的製冰排程跑進白天都要報
+        p = ice_entry_problem(_entry(sched, "ice", wd))
+        if p:
+            out.append(f"🚨 星期{WD[wd]}製冰排程 {p}")
+    for kind in ("melt", "chu2"):
+        for wd in range(7):
+            e = _entry(sched, kind, wd)
+            if e and e.get("en") == 1 and not (_hm_ok(e.get("on")) and _hm_ok(e.get("off"))):
+                out.append(f"⚠️ 星期{WD[wd]}{SCHED_NAMES[kind]}排程時間數值異常（{e.get('on')}–{e.get('off')}）")
+    tmr = (now + dt.timedelta(days=1)).date()
+    tonight = now.weekday()
+    if nightly and tmr.weekday() < 5:
+        ice = _entry(sched, "ice", tonight)
+        melt, chu2 = _entry(sched, "melt", tmr.weekday()), _entry(sched, "chu2", tmr.weekday())
+        if is_summer(tmr):
+            if ice and ice.get("en") != 1:
+                out.append(f"⚠️ 今晚（星期{WD[tonight]}）沒有勾製冰，明天下午尖峰只能靠磁浮硬撐（像 10/2 那次）。明天若放假可忽略")
+            if melt and melt.get("en") != 1:
+                out.append(f"⚠️ 明天（星期{WD[tmr.weekday()]}）融冰排程沒勾，16:00 磁浮關掉後會沒有冷源")
+            elif melt and _hm_ok(melt.get("on")) and _hm_ok(melt.get("off")) and (melt["on"] > "16:00" or melt["off"] < "19:00"):
+                out.append(f"⚠️ 明天融冰排程 {melt['on']}–{melt['off']} 沒有涵蓋 16:00–19:00（程序是 10:50–19:00）")
+            if chu2 and chu2.get("en") == 1 and _hm_ok(chu2.get("off")) and chu2["off"] > "16:00":
+                out.append(f"⚠️ 明天磁浮排程到 {chu2['off']}，夏月 16:00 尖峰起磁浮必須關、改融冰供冷")
+        elif ice and ice.get("en") == 1:
+            out.append(f"ℹ️ 今晚（星期{WD[tonight]}）有勾製冰 {ice.get('on')}–{ice.get('off')}；非夏月通常不製冰，請確認是否需要")
+    return out
+
+
+def sched_diff(old, new):
+    """兩份排程的差異（只列製冰／融冰／磁浮有變的天）。"""
+    out = []
+    for kind, name in SCHED_NAMES.items():
+        for wd in range(7):
+            a, b = _entry(old, kind, wd), _entry(new, kind, wd)
+            if (a or {}) != (b or {}):
+                out.append(f"星期{WD[wd]}{name}：{_fmt(a)} → {_fmt(b)}")
+    return out
+
+
 def _f(v, n=0):
     return "—" if v is None else f"{v:,.{n}f}"
 
@@ -91,7 +207,7 @@ class Notifier:
             with open(TOKEN_FILE, encoding="utf-8") as f:
                 self.token = f.read().strip() or None
         self.state = {"day": None, "count": 0, "sent_levels": {}, "faults": {}, "last_mag_action": None,
-                      "summary": {}, "days": {}}
+                      "summary": {}, "days": {}, "ice": {}, "sched": None, "sched_check": None, "cmd_seen": None}
         try:
             with open(STATE_FILE, encoding="utf-8") as f:
                 self.state.update(json.load(f))
@@ -223,6 +339,102 @@ class Notifier:
                 f"昨日{'省' if save >= 0 else '多用'} {_f(abs(save))} 度（{_f(abs(save) / base * 100, 1)}%）\n"
                 f"接手以來累計 {_f(cum)} 度・約 {_f(cum * 4)} 元\n※ 未做天氣校正，僅供參考")
 
+    def _ice_guard(self, now, ac, snap):
+        """製冰主機白天運轉（尤其和磁浮同時開）立刻推播；夏月平日尖峰磁浮還在轉也推播。"""
+        try:
+            age = (now - dt.datetime.strptime(ac.get("time", ""), "%Y-%m-%d %H:%M:%S")).total_seconds()
+        except ValueError:
+            return
+        if not ac.get("viewer_ok") or age > 180:
+            return                                   # 資料太舊時不判斷（另有「資料沒更新」警報）
+        st = self.state["ice"]
+        hm = now.strftime("%H:%M")
+        on, bkw = ice_running(ac)
+        mkw = mag_kw(ac)
+        mag_on = (mkw is not None and mkw >= MAG_ON_KW) or ac.get("chu2_st") == 1
+        dem = ""
+        if snap and snap.get("limit"):
+            dem = (f"\n15 分鐘推估 {_f(snap['projected'], 1)} kW／契約 {snap['limit']} kW（{snap['period']}），"
+                   f"目前 {_f(snap['now_kw'], 1)} kW")
+        if on and not in_ice_window(hm):
+            last = st.get("day_at")
+            n = st.get("day_n", 0)
+            due = last is None or (n < ICE_REPEAT_MAX and
+                                   (now - dt.datetime.fromisoformat(last)).total_seconds() >= ICE_REPEAT_MIN * 60)
+            if due:
+                st["day_at"], st["day_n"] = now.isoformat(timespec="seconds"), n + 1
+                st.setdefault("day_since", hm)
+                head = "🚨 製冰主機和磁浮同時運轉" if mag_on else "🚨 製冰主機在白天運轉"
+                self._push(f"{head}（{st['day_since']} 起{'，第 ' + str(n + 1) + ' 次通知' if n else ''}）\n"
+                           f"製冰 BCU-1 {_f(bkw)} kW" + (f"、磁浮 {_f(mkw)} kW" if mag_on else "") + dem +
+                           "\n製冰主機約 240 kW，和上班空調疊在一起很容易超約。\n"
+                           "請立即到【空調監控主機】把 BCU 製冰停掉，並檢查製冰排程有沒有被勾到白天。", force=True)
+        elif st.get("day_at"):
+            self._push(f"✅ 製冰主機已停止（{st.get('day_since', '—')} 起白天運轉）", force=True)
+            st.pop("day_at", None), st.pop("day_n", None), st.pop("day_since", None)
+        peak = is_summer(now) and now.weekday() < 5 and "16:00" <= hm < "22:00"
+        if peak and mag_on:
+            since = st.setdefault("peak_since", now.isoformat(timespec="seconds"))
+            if st.get("peak_day") != now.date().isoformat() and \
+                    (now - dt.datetime.fromisoformat(since)).total_seconds() >= 300:
+                st["peak_day"] = now.date().isoformat()
+                self._push(f"⚠️ 夏月尖峰（16:00–22:00）磁浮還在運轉：{_f(mkw)} kW{dem}\n"
+                           "程序規定尖峰時段磁浮要關、由融冰供冷，請確認。", force=True)
+        else:
+            st.pop("peak_since", None)
+
+    def _sched_guard(self, now, ac):
+        """排程被修改 → 推播新舊值與檢查結果；每天 21:30 檢查今晚／明天的排程，有問題才推播。"""
+        sched = ac.get("sched")
+        if not sched or not ac.get("viewer_ok"):
+            return
+        view = {k: sched.get(k) for k in SCHED_NAMES}
+        old = self.state.get("sched")
+        if old is None:
+            self.state["sched"] = view
+            self._save()
+        elif view != old:
+            diff = sched_diff(old, view)
+            self.state["sched"] = view
+            if diff:
+                probs = sched_problems(view, now)
+                self._push("📝 空調主機排程被修改（" + now.strftime("%H:%M") + " 前後）\n" + "\n".join(diff[:10]) +
+                           ("\n" + "\n".join(probs[:8]) if probs else "\n檢查結果：沒有跑進白天的製冰排程"), force=True)
+        day = now.date().isoformat()
+        if now.strftime("%H:%M") >= SCHED_CHECK_AT and self.state.get("sched_check") != day:
+            self.state["sched_check"] = day
+            probs = sched_problems(view, now, nightly=True)
+            if probs:
+                self._push(f"排程檢查 {now:%m-%d %H:%M}\n" + "\n".join(probs[:8]), force=True)
+            else:
+                self._save()
+
+    def _cmd_result(self, now):
+        """指令信箱執行結果：每個指令 id＋狀態只推一次。每 30 秒看一次檔案。"""
+        if (now - getattr(self, "_cmd_at", dt.datetime.min)).total_seconds() < 30:
+            return
+        self._cmd_at = now
+        try:
+            with open(CMD_RESULT, encoding="utf-8-sig") as f:
+                r = json.load(f)
+        except (OSError, ValueError):
+            return
+        key = f"{r.get('id')}|{r.get('status')}"
+        if not r.get("id") or key == self.state.get("cmd_seen"):
+            return
+        first = self.state.get("cmd_seen") is None
+        self.state["cmd_seen"] = key
+        if first and r.get("time", "")[:10] != now.date().isoformat():
+            self._save()
+            return                                   # 第一次啟動時不重推以前的舊結果
+        head = {"done": "✅ 排程指令已執行", "rejected": "⛔ 排程指令被擋下（沒有寫入）",
+                "failed": "❌ 排程指令沒有完成", "dry_run": "🧪 排程指令試跑（只檢查，沒有寫入）"}.get(r.get("status"), "排程指令")
+        lines = r.get("lines") or []
+        if isinstance(lines, str):
+            lines = [lines]
+        self._push(f"{head}（{r.get('time', '')[11:16]}，編號 {r.get('id')}）\n" + "\n".join(lines[:12]) +
+                   (f"\n說明：{r['note']}" if r.get("note") else ""), force=True)
+
     def tick(self, now, live_ok, snap, ac, mag, ems):
         if not self.enabled:
             return
@@ -251,6 +463,10 @@ class Notifier:
                 self._fault("mag_enabled", mag.get("enabled") is False and mag.get("mode") == "LIVE",
                             "中控「是否啟用」未打勾，負載限制不會作用", "中控「是否啟用」已打勾", now, 60)
                 self._mag(mag)
+            if ac:
+                self._ice_guard(now, ac, snap if live_ok else None)
+                self._sched_guard(now, ac)
+            self._cmd_result(now)
             self._summary(now, snap, ems, mag)
             if (now - self.saved_at).total_seconds() >= 300:
                 self.saved_at = now

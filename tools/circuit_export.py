@@ -121,7 +121,8 @@ def copy_ac_files(out_dir):
     import shutil
     today = dt.date.today()
     names = [f"{p}_{d:%Y-%m-%d}.csv" for p in ("AC", "PLANT", "FCU", "mag_auto", "fcu_guard") for d in (today - dt.timedelta(days=1), today)]
-    names += ["ac_latest.json", "mag_auto_status.json", "fcu_guard_status.json"]
+    names += ["ac_latest.json", "mag_auto_status.json", "fcu_guard_status.json",
+              "sched_cmd_result.json", "sched_cmd.log", "sched_changes.log"]
     copied = 0
     try:
         for n in names:
