@@ -9,6 +9,10 @@
 #   製冰有勾時不能跑進 07:30–22:00；融冰、磁浮不能跨午夜，且要在 07:00–22:00 之內；
 #   夏月（5/16–10/15）星期一到五磁浮有勾時，停止時間不能晚於 16:00。
 #   指令要有 id、過期時間（核准後 24 小時內），同一個 id 只做一次。指令裡寫 "dry_run": true 就只檢查、不寫。
+# 送風機（2026-11-07 起）：kind = fcu，只限下面 $FCU_ALLOW 列的房間（目前只有 B239 = SG_2F31_P25）。
+#   {"kind":"fcu","room":"B239","units":["FCU01","FCU02"],"action":"off"|"on"|"setT","value":26}
+#   action off/on 寫 _Run（0/1），寫完約 75 秒內看風速狀態確認；setT 只允許 24–28 °C，立即讀回。
+#   平日 18:00–07:00 遠端開啟時，若當晚加班名單檔已存在，把房號加進去，避免 fcu_guard 又把它關掉。
 # 停用：在 C:\BMS_Export 放 sched_cmd_off.txt。
 # 結果：C:\BMS_Export\sched_cmd_result.json（監控電腦讀到後推 LINE）與 sched_cmd.log。
 # 測試：powershell -ExecutionPolicy Bypass -File C:\BMS_Export\sched_cmd.ps1 -File 某指令.json -DryRun   （只檢查、不寫）
@@ -25,6 +29,8 @@ $PREFIX = @{ ice = 'BCU_SCHI'; melt = 'BCU_SCHW'; chu2 = 'CHU2_SCH' }
 $NAME = @{ ice = '製冰'; melt = '融冰'; chu2 = '磁浮' }
 $WD = '一二三四五六日'
 $ICE_OK_FROM = '22:00'; $ICE_OK_TO = '07:30'
+$FCU_ALLOW = @{ 'B239' = 'SG_2F31_P25' }     # 房號 → InTouch 面板（Cliff 授權的房間才放進來）
+$FCU_SET_MIN = 24; $FCU_SET_MAX = 28
 
 $src = @"
 using System; using System.Runtime.InteropServices; using System.Text;
@@ -87,7 +93,20 @@ function Is-Summer($t) { $md = $t.Month * 100 + $t.Day; return ($md -ge 516 -and
 
 function Check-Change($c, $now) {
   # 回傳 $null = 通過；否則回傳擋下的原因
-  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2）" }
+  if ("$($c.kind)" -eq 'fcu') {
+    if (-not $FCU_ALLOW.ContainsKey("$($c.room)")) { return "送風機房間 $($c.room) 不在授權清單（目前只有 $($FCU_ALLOW.Keys -join ', ')）" }
+    $us = @($c.units)
+    if ($us.Count -lt 1 -or $us.Count -gt 9) { return "送風機台數不對" }
+    foreach ($u in $us) { if ("$u" -notmatch '^FCU0[1-9]$') { return "送風機編號 $u 不對（FCU01–FCU09）" } }
+    if (@('off','on','setT') -notcontains "$($c.action)") { return "送風機動作 $($c.action) 不對（off / on / setT）" }
+    if ("$($c.action)" -eq 'setT') {
+      $v = 0.0
+      if (-not [double]::TryParse("$($c.value)", [Globalization.NumberStyles]::Float, $inv, [ref]$v) -or $v -lt $FCU_SET_MIN -or $v -gt $FCU_SET_MAX) {
+        return "設定溫度 $($c.value) 超出 $FCU_SET_MIN–$FCU_SET_MAX °C" }
+    }
+    return $null
+  }
+  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu）" }
   $d = 0; if (-not [int]::TryParse("$($c.day)", [ref]$d) -or $d -lt 1 -or $d -gt 7) { return "星期 $($c.day) 不對（1–7）" }
   if (-not (Hm-Ok $c.on) -or -not (Hm-Ok $c.off)) { return "時間格式不對（$($c.on)–$($c.off)，要 HH:MM）" }
   if ("$($c.en)" -ne '0' -and "$($c.en)" -ne '1') { return "勾選 en 只能 0 或 1" }
@@ -138,6 +157,29 @@ function Save-Result($r) {
   if (-not $ManualDry) { "$($r.id)" | Out-File $DoneFile -Append -Encoding ascii }
 }
 
+function Fcu-Read($panel, $u) {
+  $v = [CticDdeW]::Read([string[]]@("$($panel)_$($u)_Run", "$($panel)_$($u)_Fan_High", "$($panel)_$($u)_Fan_Middle", "$($panel)_$($u)_Fan_Low", "$($panel)_$($u)_setT", "$($panel)_$($u)_T"), 3000, 20000)
+  if ($null -eq $v) { return $null }
+  $n = @($v | ForEach-Object { $x = 0.0; if ([double]::TryParse("$_", [Globalization.NumberStyles]::Float, $inv, [ref]$x)) { $x } else { $null } })
+  return [ordered]@{ run = $n[0]; fan = $(if ($null -eq $n[1]) { $null } else { [int](($n[1] -eq 1) -or ($n[2] -eq 1) -or ($n[3] -eq 1)) }); setT = $n[4]; t = $n[5] }
+}
+function Fcu-Text($r) {
+  if ($null -eq $r -or $null -eq $r.run) { return '讀不到' }
+  $on = $(if ($r.fan -eq 1) { '運轉中' } else { '停止' })
+  return "$on，設定 $($r.setT)°C，室溫 $([math]::Round([double]$r.t, 1))°C"
+}
+function Fcu-AllowAfterHours($room) {
+  # 平日 18:00–07:00 遠端開啟：當晚加班名單檔若已存在，加上這個房號（名單不存在 = 晚上關機規則沒啟用，不建立新檔，以免誤啟用）
+  $now = Get-Date; $hm = $now.ToString('HH:mm')
+  if ($now.DayOfWeek -eq 'Saturday' -or $now.DayOfWeek -eq 'Sunday' -or ($hm -lt '18:00' -and $hm -ge '07:00')) { return '' }
+  $day = $(if ($hm -lt '07:00') { $now.AddDays(-1) } else { $now })
+  $f1 = Join-Path $Out ("afterhours_allow_{0:yyyy-MM-dd}.txt" -f $day); $f2 = Join-Path $Out 'afterhours_allow.txt'
+  if (-not (Test-Path $f1)) { if (Test-Path $f2) { Copy-Item $f2 $f1 } else { return '' } }
+  if (@(Get-Content $f1 -Encoding UTF8 | ForEach-Object { ($_ -split '\s+')[0] }) -contains $room) { return '' }
+  "$room   # 指令信箱遠端開啟 $(Get-Date -f 'HH:mm')" | Out-File $f1 -Append -Encoding utf8
+  return "（已加入今晚加班名單，晚上巡檢不會再關）"
+}
+
 # ---- 讀指令 ----
 if (Test-Path $Off) { exit 0 }
 $raw = $null
@@ -177,7 +219,7 @@ if (($exp - $apv).TotalHours -gt 24) { $res.status = 'rejected'; $res.lines = @(
 $changes = @($cmd.changes)
 if ($changes.Count -lt 1 -or $changes.Count -gt 21) { $res.status = 'rejected'; $res.lines = @('沒有要改的項目，或一次超過 21 筆'); Save-Result $res; exit 0 }
 $why = @()
-foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += "$(Day-Label $c.day) $e" } }
+foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if ("$($c.kind)" -eq 'fcu') { "$($c.room) $e" } else { "$(Day-Label $c.day) $e" }) } }
 if ($why.Count) { $res.status = 'rejected'; $res.lines = @('整筆指令沒有執行：') + $why; Save-Result $res; exit 0 }
 
 # ---- 寫入（WindowViewer 要開著） ----
@@ -186,6 +228,33 @@ if ($null -eq $probe) { $res.status = 'failed'; $res.lines = @('讀不到 InTouc
   ($res | ConvertTo-Json -Depth 6) | Out-File $ResultFile -Encoding utf8; Log "$($res.id) viewer down, will retry"; exit 0 }
 $allOk = $true
 foreach ($c in $changes) {
+  if ("$($c.kind)" -eq 'fcu') {
+    $panel = $FCU_ALLOW["$($c.room)"]; $act = "$($c.action)"
+    $what = $(if ($act -eq 'off') { '關閉' } elseif ($act -eq 'on') { '開啟' } else { "設定 $($c.value)°C" })
+    foreach ($u in @($c.units)) {
+      $label = "$($c.room) $u"
+      $before = Fcu-Read $panel $u
+      if ($null -eq $before -or $null -eq $before.run) { $allOk = $false; $res.lines += "$label：讀不到這台送風機，沒有寫入 ❌"; continue }
+      if ($DryRun) { $res.lines += "$label：目前 $(Fcu-Text $before) → $what（試跑，沒寫）"; continue }
+      if ($act -eq 'setT') {
+        $val = ([double]"$($c.value)").ToString($inv)
+        $null = [CticDdeW]::Poke("$($panel)_$($u)_setT", $val); Start-Sleep -Seconds 3
+        $after = Fcu-Read $panel $u
+        if ($null -ne $after -and [math]::Abs([double]$after.setT - [double]$val) -lt 0.05) { $res.lines += "$label：設定 $($before.setT) → $($after.setT)°C ✅（室溫 $([math]::Round([double]$after.t, 1))°C）" }
+        else { $allOk = $false; $res.lines += "$label：寫入 $val°C 後讀回 $($after.setT)，不一致 ❌" }
+      } else {
+        $want = $(if ($act -eq 'off') { 0 } else { 1 })
+        $null = [CticDdeW]::Poke("$($panel)_$($u)_Run", "$want")
+        $after = $null
+        for ($k = 0; $k -lt 15; $k++) { Start-Sleep -Seconds 5; $after = Fcu-Read $panel $u; if ($null -ne $after -and $after.fan -eq $want) { break } }
+        if ($null -ne $after -and $after.fan -eq $want) { $res.lines += "$label：$(Fcu-Text $before) → $what ✅" }
+        elseif ($null -ne $after -and [int]$after.run -eq $want) { $res.lines += "$label：已送出$what（運轉指令已是 $want），風速狀態 75 秒內還沒更新，請稍後再看 ⚠️" }
+        else { $allOk = $false; $res.lines += "$label：送出$what後讀回不符（$(Fcu-Text $after)）❌" }
+      }
+    }
+    if (-not $DryRun -and $act -eq 'on') { $x = Fcu-AllowAfterHours "$($c.room)"; if ($x) { $res.lines += $x } }
+    continue
+  }
   $tags = Tags $c; $want = Want $c
   $label = "$(Day-Label $c.day)$($NAME[$c.kind])"
   $before = [CticDdeW]::Read($tags, 3000, 20000)
