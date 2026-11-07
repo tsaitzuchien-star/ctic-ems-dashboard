@@ -1,0 +1,11 @@
+{
+  "id": "2026-11-07-dry1",
+  "requested_by": "Cliff Tsai",
+  "approved_at": "2026-11-07T21:06:32+08:00",
+  "expires": "2026-11-08T01:06:32+08:00",
+  "dry_run": true,
+  "note": "第一次連線試跑：只讀現值，不寫入",
+  "changes": [
+    {"kind": "ice", "day": 1, "on": "23:55", "off": "07:00", "en": 0}
+  ]
+}
