@@ -1,14 +1,14 @@
 {
-  "id": "2026-11-09-u8",
+  "id": "2026-11-09-u9",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-09T00:30:00+08:00",
-  "expires": "2026-11-09T08:30:00+08:00",
-  "note": "迴路測試頁 v2：只列有問題的迴路＋怎麼測（PR #42，Cliff 好執行）",
-  "sha": "fa76ff337a8a5144521554a94cd10bf512edb085",
+  "approved_at": "2026-11-09T07:01:42+08:00",
+  "expires": "2026-11-09T15:01:42+08:00",
+  "note": "送風機巡檢：公共區清潔時段 06:00–07:00 不關（PR #43，Cliff 好執行）",
+  "sha": "3379ac6e06a69b77cdada191e397cbea1cf91464",
   "files": [
     {
-      "pc": "bms",
-      "file": "circuit_test.html"
+      "pc": "ac",
+      "file": "tools/fcu_guard.ps1"
     }
   ]
 }
