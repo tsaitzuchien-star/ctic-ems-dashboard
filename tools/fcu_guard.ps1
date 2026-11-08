@@ -88,6 +88,10 @@ $ZONE_SET_MIN = 20.0; $EVENT_PRECOOL_MIN = 30
 # 警衛室（1 樓收發室一帶 1-P21，SP-21-1 L7/L8）：24 小時有人值勤，下限 22°C、下班不關（Cliff 2026-11-06 16:24）
 $GUARD = @('SG_1F31_P21'); $GUARD_SET_MIN = 22.0
 function Is-Guard($u) { foreach ($p in $GUARD) { if ($u.StartsWith($p)) { return $true } }; return $false }
+# 廁所（Cliff 2026-11-09 06:57）：清潔人員 06:00 上班會打開，06:00–07:00 不關、不調 28°C；18:00 下班後照常關
+# 面板 → 顯示名稱（A 棟 B 梯旁廁所；房號依空間編號推論，待溫控器 IP2 貼紙確認）
+$TOILET = @{ 'SG_3F1_P02' = '廁所A305/A306'; 'SG_2F1_P02' = '廁所A209/A210' }; $TOILET_FROM = '06:00'
+function Toilet-Of($u) { foreach ($p in $TOILET.Keys) { if ($u.StartsWith($p)) { return $TOILET[$p] } }; return '' }
 $EventFile = Join-Path $Out 'ac_events.txt'   # 一行一場：2026-11-07 07:30-17:30 會議廳 展演 訓練（也可寫 全部，或面板編號）
 function Zone-Panels { @($ZONES.Values | ForEach-Object { $_ }) }
 function In-Zone($u) { foreach ($p in (Zone-Panels)) { if ($u.StartsWith($p)) { return $true } }; return $false }
@@ -129,7 +133,7 @@ if (Test-Path $rf) {
     elseif (-not $roomOf.ContainsKey($r.panel)) { $roomOf[$r.panel] = $r.rooms }
   }
 }
-function Rooms($u) { $p = $u -replace '_FCU\d+$',''; if ($roomOf.ContainsKey($u)) { $roomOf[$u] } elseif ($roomOf.ContainsKey($p)) { $roomOf[$p] } else { '' } }
+function Rooms($u) { $p = $u -replace '_FCU\d+$',''; if ($roomOf.ContainsKey($u) -and $roomOf[$u]) { $roomOf[$u] } elseif ($roomOf.ContainsKey($p) -and $roomOf[$p]) { $roomOf[$p] } else { Toilet-Of $u } }
 
 # 讀 Run、setT
 $tags = [string[]]@(foreach ($u in $units) { "$($u)_Run"; "$($u)_setT" })
@@ -157,6 +161,7 @@ if ($after) {
 $ev = Event-Now $now; $status.event = $ev.text
 function Allowed($u) {
   if (Is-Guard $u) { return $true }   # 警衛室 24 小時
+  if ((Toilet-Of $u) -and $hm -ge $TOILET_FROM -and $hm -lt $AFTER_END) { return $true }   # 廁所：清潔人員 06:00 起
   foreach ($p in $ev.panels) { if ($u.StartsWith($p)) { return $true } }   # 場地租借時段照常供冷
   # 名單每行：房號或面板，後面可加結束時間，例如「C303 19:00」= 申請到 19:00，之後照樣關
   $rooms = @((Rooms $u) -split ' ' | Where-Object { $_ })
