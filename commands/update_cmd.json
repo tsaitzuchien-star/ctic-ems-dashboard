@@ -1,18 +1,14 @@
 {
-  "id": "2026-11-08-u4",
+  "id": "2026-11-08-u5",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-08T10:37:24+08:00",
-  "expires": "2026-11-08T16:37:53+08:00",
-  "note": "指令信箱加「磁浮負載上限」指令（PR #38，Cliff 好執行）",
-  "sha": "f3173b8a6dc6cbc49dab628bb96af78450c5214e",
+  "approved_at": "2026-11-08T23:06:59+08:00",
+  "expires": "2026-11-09T07:07:23+08:00",
+  "note": "指令信箱加「活動登記」指令（PR #39，Cliff 好執行）",
+  "sha": "89fce313b02b9591b782b67ddbb40d152ebc62a0",
   "files": [
     {
       "pc": "ac",
       "file": "tools/sched_cmd.ps1"
-    },
-    {
-      "pc": "ac",
-      "file": "tools/mag_auto.ps1"
     }
   ]
 }
