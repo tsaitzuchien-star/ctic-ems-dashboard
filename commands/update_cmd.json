@@ -1,22 +1,14 @@
 {
-  "id": "2026-11-09-u6",
+  "id": "2026-11-09-u7",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-09T00:03:13+08:00",
-  "expires": "2026-11-09T08:03:13+08:00",
-  "note": "迴路測試 API + 更新程式允許清單 + P3B 修正（PR #40/#41，Cliff 好 好、執行）",
+  "approved_at": "2026-11-09T00:14:46+08:00",
+  "expires": "2026-11-09T08:14:46+08:00",
+  "note": "迴路測試頁 circuit_test.html（PR #41 第二步，Cliff 執行）",
   "sha": "b9d310f696259ded0d63cbb91a96315523ac3b9c",
   "files": [
     {
       "pc": "bms",
-      "file": "tools/local_live.py"
-    },
-    {
-      "pc": "bms",
-      "file": "tools/update_cmd.ps1"
-    },
-    {
-      "pc": "bms",
-      "file": "index.html"
+      "file": "circuit_test.html"
     }
   ]
 }
