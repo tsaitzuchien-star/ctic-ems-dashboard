@@ -289,10 +289,13 @@ class Notifier:
         days = self.state["days"]
         if ems and ems.get("updated", "")[:10] == day:
             live = bool(mag and mag.get("mode") == "LIVE" and not mag.get("off"))
-            prev_live = (days.get(day) or {}).get("live", False)
+            prev = days.get(day) or {}
+            prev_live = prev.get("live", False)
+            pv = ems.get("pv") or {}
+            pv_kwh = pv.get("today_kwh") if (pv.get("updated") or "")[:10] == day else prev.get("pv_kwh")
             days[day] = {"peak": ems.get("today_peak_kw"), "peak_at": ems.get("today_peak_at"),
                          "kwh": ems.get("today_kwh"), "mag": ems.get("mag_today"), "live": live or prev_live,
-                         "wd": now.weekday() < 5}
+                         "wd": now.weekday() < 5, "pv_kwh": pv_kwh}
         for k in sorted(days)[:-60]:              # 保留 60 天，給「節電成效」比較人工時期
             days.pop(k)
         hm = now.strftime("%H:%M")
@@ -304,7 +307,7 @@ class Notifier:
             if d:
                 m = d.get("mag") or {}
                 self._push(f"昨日摘要 {y[5:]}\n最高 15 分鐘需量 {_f(d['peak'], 1)} kW（{d['peak_at'] or '—'}）\n"
-                           f"用電 {_f(d['kwh'])} 度\n磁浮運轉 {_f(m.get('run_hours'), 1)} h・{_f(m.get('kwh'))} 度\n"
+                           + self._kwh_lines(d) + "\n" + f"磁浮運轉 {_f(m.get('run_hours'), 1)} h・{_f(m.get('kwh'))} 度\n"
                            + self._savings(y, d), force=True)
             else:
                 self._save()
@@ -320,6 +323,16 @@ class Notifier:
                 self._push("\n".join(lines), force=True)
             else:
                 self._save()
+
+    @staticmethod
+    def _kwh_lines(d):
+        """用電：台電電表（買電）＋太陽能（全部自發自用、在總表後面）＝ 總用電。"""
+        pv = d.get("pv_kwh")
+        if d.get("kwh") is None:
+            return "用電 — 度"
+        if pv is None:
+            return f"台電電表 {_f(d['kwh'])} 度\n總用電 —（太陽能資料缺）"
+        return f"台電電表 {_f(d['kwh'])} 度＋太陽能 {_f(pv)} 度\n總用電 {_f(d['kwh'] + pv)} 度"
 
     def _savings(self, day, d):
         """節電成效：自動控制當天的磁浮度數 vs 人工時期同類日（平日／假日）最近 10 天平均。"""
