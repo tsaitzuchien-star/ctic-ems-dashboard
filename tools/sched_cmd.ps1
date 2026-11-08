@@ -16,6 +16,11 @@
 # 照明（2026-11-07 起，Cliff 授權）：kind = light，只限 B330（InTouch 只有這間有燈控）。
 #   {"kind":"light","room":"B330","circuits":"all" 或 ["EL3C_13","EL3C1_11",...],"action":"on"|"off"}
 #   寫各迴路 Light_B330_<迴路>_LIGHT_DO（1 亮 / 0 滅），3 秒後讀回 DO 和 DI。A/B 區總開關只讀不寫。
+# 磁浮負載上限（2026-11-08 起，Cliff 授權）：kind = maglimit，不直接寫 InTouch，而是寫 C:\BMS_Export\mag_limit_override.json，
+#   由 mag_auto 在那一天、那個時段把負載上限的「底」設成 pct（需量接近契約時仍會先降載）。
+#   {"kind":"maglimit","date":"2026-11-09","from":"07:40","to":"09:30","pct":100}   設定（同一天再送一次會蓋掉）
+#   {"kind":"maglimit","date":"2026-11-09","action":"clear"}                         取消那一天
+#   只限今天起 7 天內的平日（星期一到五）、07:00–22:00、pct 20–100。
 # 停用：在 C:\BMS_Export 放 sched_cmd_off.txt。
 # 結果：C:\BMS_Export\sched_cmd_result.json（監控電腦讀到後推 LINE）與 sched_cmd.log。
 # 測試：powershell -ExecutionPolicy Bypass -File C:\BMS_Export\sched_cmd.ps1 -File 某指令.json -DryRun   （只檢查、不寫）
@@ -28,6 +33,7 @@ $Off = Join-Path $Out 'sched_cmd_off.txt'
 $DoneFile = Join-Path $Out 'sched_cmd_done.txt'
 $Log = Join-Path $Out 'sched_cmd.log'
 $ResultFile = Join-Path $Out 'sched_cmd_result.json'
+$MagOvFile = Join-Path $Out 'mag_limit_override.json'
 $PREFIX = @{ ice = 'BCU_SCHI'; melt = 'BCU_SCHW'; chu2 = 'CHU2_SCH' }
 $NAME = @{ ice = '製冰'; melt = '融冰'; chu2 = '磁浮' }
 $WD = '一二三四五六日'
@@ -126,8 +132,28 @@ function Light-Text($r, $cs) {
   return "$t；A區總開關 $($r.a)、B區總開關 $($r.b)"
 }
 
+function MagOv-Load {
+  $o = [ordered]@{}
+  if (Test-Path $MagOvFile) {
+    try { $j = Get-Content $MagOvFile -Raw -Encoding UTF8 | ConvertFrom-Json; foreach ($p in $j.PSObject.Properties) { $o[$p.Name] = $p.Value } } catch { }
+  }
+  return $o
+}
+function MagOv-Text($e) { if ($null -eq $e) { return '沒有特別設定' } else { return "$($e.from)–$($e.to) 上限 $($e.pct)%" } }
 function Check-Change($c, $now) {
   # 回傳 $null = 通過；否則回傳擋下的原因
+  if ("$($c.kind)" -eq 'maglimit') {
+    $dt = [datetime]::MinValue
+    if (-not [datetime]::TryParseExact("$($c.date)", 'yyyy-MM-dd', $inv, [Globalization.DateTimeStyles]::None, [ref]$dt)) { return "日期 $($c.date) 格式不對（yyyy-MM-dd）" }
+    if ($dt -lt $now.Date -or $dt -gt $now.Date.AddDays(7)) { return "日期 $($c.date) 要在今天起 7 天內" }
+    if ("$($c.action)" -eq 'clear') { return $null }
+    if ($dt.DayOfWeek -eq 'Saturday' -or $dt.DayOfWeek -eq 'Sunday') { return "$($c.date) 是週末，自動控制週末不套用時段上限" }
+    if (-not (Hm-Ok $c.from) -or -not (Hm-Ok $c.to)) { return "時間格式不對（$($c.from)–$($c.to)，要 HH:MM）" }
+    if ("$($c.from)" -ge "$($c.to)") { return "開始要早於結束（$($c.from)–$($c.to)）" }
+    if ("$($c.from)" -lt '07:00' -or "$($c.to)" -gt '22:00') { return "要在 07:00–22:00 之內（$($c.from)–$($c.to)）" }
+    $v = 0; if (-not [int]::TryParse("$($c.pct)", [ref]$v) -or $v -lt 20 -or $v -gt 100) { return "負載上限 $($c.pct)% 要在 20–100 之間" }
+    return $null
+  }
   if ("$($c.kind)" -eq 'fcu') {
     if (-not $FCU_ALLOW.ContainsKey("$($c.room)")) { return "送風機房間 $($c.room) 不在授權清單（目前只有 $($FCU_ALLOW.Keys -join ', ')）" }
     $us = @($c.units)
@@ -148,7 +174,7 @@ function Check-Change($c, $now) {
     if ($null -eq $cs) { return "照明迴路不對（要 all 或 $($LIGHT_CIRCUITS -join ',') 其中幾個）" }
     return $null
   }
-  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light）" }
+  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit）" }
   $d = 0; if (-not [int]::TryParse("$($c.day)", [ref]$d) -or $d -lt 1 -or $d -gt 7) { return "星期 $($c.day) 不對（1–7）" }
   if (-not (Hm-Ok $c.on) -or -not (Hm-Ok $c.off)) { return "時間格式不對（$($c.on)–$($c.off)，要 HH:MM）" }
   if ("$($c.en)" -ne '0' -and "$($c.en)" -ne '1') { return "勾選 en 只能 0 或 1" }
@@ -263,7 +289,7 @@ if (($exp - $apv).TotalHours -gt 24) { $res.status = 'rejected'; $res.lines = @(
 $changes = @($cmd.changes)
 if ($changes.Count -lt 1 -or $changes.Count -gt 21) { $res.status = 'rejected'; $res.lines = @('沒有要改的項目，或一次超過 21 筆'); Save-Result $res; exit 0 }
 $why = @()
-foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } else { "$(Day-Label $c.day) $e" }) } }
+foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } else { "$(Day-Label $c.day) $e" }) } }
 if ($why.Count) { $res.status = 'rejected'; $res.lines = @('整筆指令沒有執行：') + $why; Save-Result $res; exit 0 }
 
 # ---- 寫入（WindowViewer 要開著） ----
@@ -272,6 +298,23 @@ if ($null -eq $probe) { $res.status = 'failed'; $res.lines = @('讀不到 InTouc
   ($res | ConvertTo-Json -Depth 6) | Out-File $ResultFile -Encoding utf8; Log "$($res.id) viewer down, will retry"; exit 0 }
 $allOk = $true
 foreach ($c in $changes) {
+  if ("$($c.kind)" -eq 'maglimit') {
+    $label = "磁浮負載上限 $($c.date)"
+    $ov = MagOv-Load; $before = $ov["$($c.date)"]
+    $isClear = ("$($c.action)" -eq 'clear')
+    $what = $(if ($isClear) { '取消特別設定' } else { "$($c.from)–$($c.to) 上限 $([int]"$($c.pct)")%" })
+    if ($DryRun) { $res.lines += "${label}：目前 $(MagOv-Text $before) → $what（試跑，沒寫）"; continue }
+    foreach ($k in @($ov.Keys)) { if ("$k" -lt $now.ToString('yyyy-MM-dd')) { $ov.Remove($k) } }   # 過期的順便清掉
+    if ($isClear) { $ov.Remove("$($c.date)") } else { $ov["$($c.date)"] = [ordered]@{ from = "$($c.from)"; to = "$($c.to)"; pct = [int]"$($c.pct)"; id = "$($cmd.id)" } }
+    $tmp = "$MagOvFile.tmp"
+    ($ov | ConvertTo-Json -Depth 4) | Out-File $tmp -Encoding utf8
+    Move-Item $tmp $MagOvFile -Force
+    $after = (MagOv-Load)["$($c.date)"]
+    $ok = $(if ($isClear) { $null -eq $after } else { $null -ne $after -and "$($after.from)" -eq "$($c.from)" -and "$($after.to)" -eq "$($c.to)" -and [int]$after.pct -eq [int]"$($c.pct)" })
+    if ($ok) { $res.lines += "${label}：$(MagOv-Text $before) → $what ✅（自動控制下一輪就會讀到）" }
+    else { $allOk = $false; $res.lines += "${label}：寫入後讀回 $(MagOv-Text $after) 和指令不符 ❌" }
+    continue
+  }
   if ("$($c.kind)" -eq 'fcu') {
     $panel = $FCU_ALLOW["$($c.room)"]; $act = "$($c.action)"
     $what = $(if ($act -eq 'off') { '關閉' } elseif ($act -eq 'on') { '開啟' } else { "設定 $($c.value)°C" })
