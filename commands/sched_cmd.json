@@ -1,11 +1,17 @@
 {
-  "id": "2026-11-07-fcu-w3",
+  "id": "2026-11-08-chu2-dry1",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-07T22:07:07+08:00",
-  "expires": "2026-11-07T23:07:07+08:00",
-  "note": "B239 兩台關機（Cliff 核准）；設定 24 °C 再寫一次確保上一筆有生效",
+  "approved_at": "2026-11-08T10:23:51+08:00",
+  "expires": "2026-11-08T13:23:51+08:00",
+  "note": "只讀：查星期一磁浮排程現值（測試 7:20 開機前）",
+  "dry_run": true,
   "changes": [
-    {"kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "setT", "value": 24},
-    {"kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "off"}
+    {
+      "kind": "chu2",
+      "day": 1,
+      "on": "07:20",
+      "off": "19:00",
+      "en": 1
+    }
   ]
 }
