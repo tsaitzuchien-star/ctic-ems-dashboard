@@ -1,10 +1,10 @@
 {
-  "id": "2026-11-09-u7",
+  "id": "2026-11-09-u8",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-09T00:14:46+08:00",
-  "expires": "2026-11-09T08:14:46+08:00",
-  "note": "迴路測試頁 circuit_test.html（PR #41 第二步，Cliff 執行）",
-  "sha": "b9d310f696259ded0d63cbb91a96315523ac3b9c",
+  "approved_at": "2026-11-09T00:30:00+08:00",
+  "expires": "2026-11-09T08:30:00+08:00",
+  "note": "迴路測試頁 v2：只列有問題的迴路＋怎麼測（PR #42，Cliff 好執行）",
+  "sha": "fa76ff337a8a5144521554a94cd10bf512edb085",
   "files": [
     {
       "pc": "bms",
