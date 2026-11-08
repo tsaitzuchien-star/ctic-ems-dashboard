@@ -509,6 +509,28 @@ def read_fcu(now):
 STATE_LOCK = threading.Lock()
 LIVE = {"ok": False, "error": "啟動中"}
 EMS = {"live": None, "rooms": None}         # 本機算的 live.json、rooms.json（bytes）
+CIRC = {"obj": None}                        # 全迴路讀值（給 /api/ems/panel 迴路測試頁用）
+
+
+def panel_readings(panel):
+    """迴路測試頁用：某一個盤最近約 20 分鐘、每分鐘的各迴路累積度數。panel 用網站寫法（L4C、R4C_1、EP3D_1_B）。"""
+    c = CIRC["obj"]
+    if not c or not c.recent:
+        return None
+    want = panel.replace("-", "_").upper()
+    rows, panels = [], set()
+    for t, vals in list(c.recent):
+        row = {}
+        for tag, v in vals.items():
+            key = ems_calc.circuit_key(tag)
+            if not key or key.startswith("#"):
+                continue
+            p, _, n = key.rpartition("_")
+            panels.add(p)
+            if p.upper() == want:
+                row[n] = v
+        rows.append([t.strftime("%Y-%m-%d %H:%M:%S"), row])
+    return {"panel": want, "rows": rows, "panels": sorted(panels)}
 LOCAL_FLAG = b"<script>window.EMS_LOCAL=true</script>"
 
 
@@ -528,6 +550,15 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/live"):
             with STATE_LOCK:
                 body = json.dumps(LIVE, ensure_ascii=False).encode("utf-8")
+            ctype = CTYPES[".json"]
+        elif path == "/api/ems/panel":
+            from urllib.parse import parse_qs
+            q = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            data = panel_readings((q.get("p") or [""])[0])
+            if data is None:
+                self.send_error(503, "Circuit data not ready yet")
+                return
+            body = json.dumps(data, ensure_ascii=False).encode("utf-8")
             ctype = CTYPES[".json"]
         elif path in ("/api/ems/live.json", "/api/ems/rooms.json"):
             with STATE_LOCK:
@@ -660,6 +691,7 @@ def main():
     notifier, ems_data = line_push.Notifier(), None
     log("LINE 推播：" + ("已啟用" if notifier.enabled else "未設定（沒有 line_token.txt）"))
     circ, circ_at = Circuits(), 0.0
+    CIRC["obj"] = circ
     ac_trend = deque(maxlen=720)          # 每分鐘一點，保留 12 小時
     while True:
         t0 = time.time()

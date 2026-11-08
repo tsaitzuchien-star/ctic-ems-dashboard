@@ -37,6 +37,7 @@ $ALLOW = @{
     'tools/ems_calc.py'       = @{ to = 'ems_calc.py';       task = 'CTIC_Local_Live' }
     'tools/circuit_export.py' = @{ to = 'circuit_export.py'; task = '' }
     'index.html'              = @{ to = 'site\index.html';   task = '' }
+    'circuit_test.html'       = @{ to = 'site\circuit_test.html'; task = '' }
     'tools/update_cmd.ps1'    = @{ to = 'update_cmd.ps1';    task = '' }
   }
 }
