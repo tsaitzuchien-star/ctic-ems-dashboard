@@ -1,14 +1,22 @@
 {
-  "id": "2026-11-08-u5",
+  "id": "2026-11-09-u6",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-08T23:06:59+08:00",
-  "expires": "2026-11-09T07:07:23+08:00",
-  "note": "指令信箱加「活動登記」指令（PR #39，Cliff 好執行）",
-  "sha": "89fce313b02b9591b782b67ddbb40d152ebc62a0",
+  "approved_at": "2026-11-09T00:03:13+08:00",
+  "expires": "2026-11-09T08:03:13+08:00",
+  "note": "迴路測試 API + 更新程式允許清單 + P3B 修正（PR #40/#41，Cliff 好 好、執行）",
+  "sha": "b9d310f696259ded0d63cbb91a96315523ac3b9c",
   "files": [
     {
-      "pc": "ac",
-      "file": "tools/sched_cmd.ps1"
+      "pc": "bms",
+      "file": "tools/local_live.py"
+    },
+    {
+      "pc": "bms",
+      "file": "tools/update_cmd.ps1"
+    },
+    {
+      "pc": "bms",
+      "file": "index.html"
     }
   ]
 }
