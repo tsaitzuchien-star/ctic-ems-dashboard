@@ -93,6 +93,10 @@ SCHED_CHECK_AT = "21:30"       # 每天檢查今晚製冰與明天融冰／磁�
 WD = "一二三四五六日"
 SCHED_NAMES = {"ice": "製冰", "melt": "融冰", "chu2": "磁浮"}
 CMD_RESULT = r"\\10.10.2.4\AC_Export\sched_cmd_result.json"   # 空調監控主機 sched_cmd.ps1（指令信箱）的執行結果
+# 程式更新信箱 update_cmd.ps1 的結果（2026-11-08）：本機（監控電腦）與空調監控主機各一份。state 鍵 → 檔案
+RESULT_FILES = {"cmd_seen": CMD_RESULT,
+                "upd_seen_bms": r"C:\BMS_Export\update_cmd_result.json",
+                "upd_seen_ac": r"\\10.10.2.4\AC_Export\update_cmd_result.json"}
 
 
 def is_summer(d):
@@ -423,30 +427,35 @@ class Notifier:
                 self._save()
 
     def _cmd_result(self, now):
-        """指令信箱執行結果：每個指令 id＋狀態只推一次。每 30 秒看一次檔案。"""
+        """指令信箱／程式更新的執行結果：每個檔案的指令 id＋狀態只推一次。每 30 秒看一次。"""
         if (now - getattr(self, "_cmd_at", dt.datetime.min)).total_seconds() < 30:
             return
         self._cmd_at = now
-        try:
-            with open(CMD_RESULT, encoding="utf-8-sig") as f:
-                r = json.load(f)
-        except (OSError, ValueError):
-            return
-        key = f"{r.get('id')}|{r.get('status')}"
-        if not r.get("id") or key == self.state.get("cmd_seen"):
-            return
-        first = self.state.get("cmd_seen") is None
-        self.state["cmd_seen"] = key
-        if first and r.get("time", "")[:10] != now.date().isoformat():
-            self._save()
-            return                                   # 第一次啟動時不重推以前的舊結果
-        head = {"done": "✅ 排程指令已執行", "rejected": "⛔ 排程指令被擋下（沒有寫入）",
-                "failed": "❌ 排程指令沒有完成", "dry_run": "🧪 排程指令試跑（只檢查，沒有寫入）"}.get(r.get("status"), "排程指令")
-        lines = r.get("lines") or []
-        if isinstance(lines, str):
-            lines = [lines]
-        self._push(f"{head}（{r.get('time', '')[11:16]}，編號 {r.get('id')}）\n" + "\n".join(lines[:12]) +
-                   (f"\n說明：{r['note']}" if r.get("note") else ""), force=True)
+        for seen, path in RESULT_FILES.items():
+            try:
+                with open(path, encoding="utf-8-sig") as f:
+                    r = json.load(f)
+            except (OSError, ValueError):
+                continue
+            key = f"{r.get('id')}|{r.get('status')}"
+            if not r.get("id") or key == self.state.get(seen):
+                continue
+            first = self.state.get(seen) is None
+            self.state[seen] = key
+            if first and r.get("time", "")[:10] != now.date().isoformat():
+                self._save()
+                continue                                 # 第一次啟動時不重推以前的舊結果
+            if r.get("kind") == "update":
+                head = {"done": "🔧 程式已更新", "rejected": "⛔ 程式更新被擋下（沒有更動）",
+                        "failed": "❌ 程式更新沒有完成（沒有更動）"}.get(r.get("status"), "程式更新")
+            else:
+                head = {"done": "✅ 排程指令已執行", "rejected": "⛔ 排程指令被擋下（沒有寫入）",
+                        "failed": "❌ 排程指令沒有完成", "dry_run": "🧪 排程指令試跑（只檢查，沒有寫入）"}.get(r.get("status"), "排程指令")
+            lines = r.get("lines") or []
+            if isinstance(lines, str):
+                lines = [lines]
+            self._push(f"{head}（{r.get('time', '')[11:16]}，編號 {r.get('id')}）\n" + "\n".join(lines[:12]) +
+                       (f"\n說明：{r['note']}" if r.get("note") else ""), force=True)
 
     def tick(self, now, live_ok, snap, ac, mag, ems):
         if not self.enabled:
