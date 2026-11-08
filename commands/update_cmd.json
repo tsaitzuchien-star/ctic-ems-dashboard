@@ -1,9 +1,14 @@
 {
-  "id": "2026-11-08-u1",
+  "id": "2026-11-08-u2",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-08T09:34:23+08:00",
-  "expires": "2026-11-08T13:34:23+08:00",
-  "note": "第一次遠端更新實測（Cliff 核准）：監控電腦網頁 index.html 換成主線 bad4c89",
-  "sha": "bad4c89489a97694e365236459a210f2271d2de4",
-  "files": [ {"pc": "bms", "file": "index.html"} ]
+  "approved_at": "2026-11-08T10:26:18+08:00",
+  "expires": "2026-11-08T16:26:35+08:00",
+  "note": "mag_auto：11/9 07:20–09:30 上限 90%（PR #37，Cliff 執行）",
+  "sha": "3ed0ad7004682ad0dfcd9df7e9e72a5ded4595e0",
+  "files": [
+    {
+      "pc": "ac",
+      "file": "mag_auto.ps1"
+    }
+  ]
 }
