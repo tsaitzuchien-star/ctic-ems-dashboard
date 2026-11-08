@@ -1,4 +1,4 @@
-# 中創園區 程式更新信箱 (update_cmd.ps1)  2026-11-08
+﻿# 中創園區 程式更新信箱 (update_cmd.ps1)  2026-11-08
 # Cliff 2026-11-08 授權（決策卡）：讓 Claude 透過指令信箱遠端更新機房電腦上的程式，但每次都要 Cliff 回「執行」。
 # 兩台電腦都裝：空調監控主機 -PC ac、監控電腦 -PC bms。排程 CTIC_Update_Cmd 每 5 分鐘跑一次。
 # 讀 GitHub tsaitzuchien-star/ctic-ems-dashboard 的 ems-commands 分支 commands/update_cmd.json：
@@ -50,6 +50,9 @@ function Save-Result($r) {
 function Gh($url) { Invoke-RestMethod -Uri $url -Headers @{ 'User-Agent' = 'ctic-update-cmd'; Accept = 'application/vnd.github+json' } -TimeoutSec 30 }
 function Syntax-Ok($path) {
   if ($path -like '*.ps1') {
+    # Windows PowerShell 5.1 沒有 BOM 會把 UTF-8 中文當成 Big5 讀，整支程式壞掉（2026-11-08 第一次就是這樣）
+    $b = [IO.File]::ReadAllBytes($path)
+    if (-not ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) -and ($b | Where-Object { $_ -ge 0x80 } | Select-Object -First 1)) { return $false }
     $e = $null; [void][Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$e)
     return (-not $e -or $e.Count -eq 0)
   }
@@ -71,7 +74,13 @@ if (-not $mtx.WaitOne(0)) { exit 0 }
 if ($File) { $cmd = Get-Content $File -Raw -Encoding utf8 | ConvertFrom-Json }
 else {
   try { $r = Gh $CmdUrl; $cmd = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($r.content -replace '\s', ''))) | ConvertFrom-Json }
-  catch { if ("$($_.Exception.Message)" -notmatch '404') { Log "fetch failed: $($_.Exception.Message)" }; exit 0 }
+  catch {
+    if ("$($_.Exception.Message)" -match '404') { exit 0 }
+    # API 次數用完（公司共用對外 IP，沒登入每小時 60 次）→ 改讀 raw（可能有幾分鐘快取）
+    try { $cmd = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 -Headers @{ 'User-Agent' = 'ctic-update-cmd' } `
+                   -Uri ("https://raw.githubusercontent.com/$Repo/ems-commands/commands/update_cmd.json?t=" + [DateTime]::UtcNow.Ticks)).Content | ConvertFrom-Json }
+    catch { if ("$($_.Exception.Message)" -notmatch '404') { Log "fetch failed: $($_.Exception.Message)" }; exit 0 }
+  }
 }
 if (-not $cmd.id) { exit 0 }
 $mine = @($cmd.files | Where-Object { "$($_.pc)" -eq $PC })
@@ -94,8 +103,16 @@ if ($bad.Count) { $res.status = 'rejected'; $res.lines = @("$pcName：不在可�
 
 # sha 一定要在 main 上（compare sha...main：identical 或 ahead 代表 main 已包含它）
 if (-not $File) {
-  try { $cmp = Gh "$Api/compare/$sha...main" } catch { Log "compare failed: $($_.Exception.Message)"; exit 0 }   # 網路問題，下次再試
-  if (@('identical', 'ahead') -notcontains "$($cmp.status)") { $res.status = 'rejected'; $res.lines = @("$pcName：$($sha.Substring(0,7)) 不在主線上（$($cmp.status)），不更新"); Save-Result $res; exit 0 }
+  $onMain = $null; $how = ''
+  try { $cmp = Gh "$Api/compare/$sha...main"; $onMain = (@('identical', 'ahead') -contains "$($cmp.status)"); $how = "$($cmp.status)" }
+  catch {
+    # API 被擋時改看主線的 commit 清單（github.com 的 Atom feed，最近約 20 筆，不算 API 次數）
+    try {
+      $feed = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 -Headers @{ 'User-Agent' = 'ctic-update-cmd' } -Uri "https://github.com/$Repo/commits/main.atom").Content
+      $onMain = ($feed -match "Commit/$sha"); $how = 'atom'
+    } catch { Log "main check failed: $($_.Exception.Message)"; exit 0 }   # 網路問題，下次再試
+  }
+  if (-not $onMain) { $res.status = 'rejected'; $res.lines = @("$pcName：$($sha.Substring(0,7)) 不在主線上（$how），不更新"); Save-Result $res; exit 0 }
 }
 
 # ---- 下載、檢查、備份、替換 ----
@@ -103,9 +120,9 @@ $tmpDir = Join-Path $Out 'update_tmp'; New-Item -ItemType Directory -Force $tmpD
 $bakDir = Join-Path $Out 'backup'; New-Item -ItemType Directory -Force $bakDir | Out-Null
 $staged = @()
 foreach ($f in $mine) {
-  $a = $ALLOW[$PC]["$($f.file)"]; $tmp = Join-Path $tmpDir ([IO.Path]::GetFileName($a.to))
+  $a = $ALLOW[$PC]["$($f.file)"]; $tmp = Join-Path $tmpDir ((($a.to -split "[\\/]")[-1]))
   try {
-    if ($File) { Copy-Item (Join-Path (Split-Path $File) ([IO.Path]::GetFileName($a.to))) $tmp -Force }   # 測試用
+    if ($File) { Copy-Item (Join-Path (Split-Path $File) ((($a.to -split "[\\/]")[-1]))) $tmp -Force }   # 測試用
     else { Invoke-WebRequest -UseBasicParsing -TimeoutSec 60 -Uri "https://raw.githubusercontent.com/$Repo/$sha/$($f.file)" -OutFile $tmp }
   } catch { $res.status = 'failed'; $res.lines = @("$pcName：下載 $($f.file) 失敗，全部沒換：$($_.Exception.Message)"); Save-Result $res; exit 0 }
   if ((Get-Item $tmp).Length -lt 200 -or -not (Syntax-Ok $tmp)) { $res.status = 'failed'; $res.lines = @("$pcName：$($f.file) 語法檢查沒過，全部沒換"); Save-Result $res; exit 0 }
@@ -113,9 +130,9 @@ foreach ($f in $mine) {
 }
 $stamp = Get-Date -f 'yyyyMMdd_HHmmss'; $tasks = @()
 foreach ($s in $staged) {
-  if (Test-Path $s.dest) { Copy-Item $s.dest (Join-Path $bakDir ("{0}.{1}" -f ([IO.Path]::GetFileName($s.dest)), $stamp)) -Force }
+  if (Test-Path $s.dest) { Copy-Item $s.dest (Join-Path $bakDir ("{0}.{1}" -f ((($s.dest -split "[\\/]")[-1])), $stamp)) -Force }
   Copy-Item $s.tmp $s.dest -Force
-  $res.lines += "$pcName：$($s.file) 已更新（$($sha.Substring(0,7))，舊檔備份 backup\$([IO.Path]::GetFileName($s.dest)).$stamp）"
+  $res.lines += "$pcName：$($s.file) 已更新（$($sha.Substring(0,7))，舊檔備份 backup\$((($s.dest -split "[\\/]")[-1])).$stamp）"
   if ($s.task -and $tasks -notcontains $s.task) { $tasks += $s.task }
 }
 $res.status = 'done'
