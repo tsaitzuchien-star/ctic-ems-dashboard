@@ -246,9 +246,27 @@ $ECO_V2_FROM = [datetime]'2026-11-09'
 $FLOOR_OVERRIDE = @{
   '2026-11-09' = @('07:20', '09:30', 90)   # 星期一 7:20 開機測試，早上上限 90%（Cliff 2026-11-08 10:22）
 }
+# 指令信箱寫的單日設定（sched_cmd kind=maglimit）：C:\BMS_Export\mag_limit_override.json，{"2026-11-09":{"from":"07:40","to":"09:30","pct":100}}
+# 有寫那一天就取代上面表格的那一天。檔案改了才重讀。
+$MagOvFile = Join-Path $Out 'mag_limit_override.json'; $script:magOv = @{}; $script:magOvAt = [datetime]::MinValue
+function Day-Override($t) {
+  $d = $t.ToString('yyyy-MM-dd')
+  try {
+    if (Test-Path $MagOvFile) {
+      $w = (Get-Item $MagOvFile).LastWriteTime
+      if ($w -ne $script:magOvAt) {
+        $j = Get-Content $MagOvFile -Raw -Encoding UTF8 | ConvertFrom-Json; $m = @{}
+        foreach ($p in $j.PSObject.Properties) { $m[$p.Name] = @("$($p.Value.from)", "$($p.Value.to)", [double]$p.Value.pct) }
+        $script:magOv = $m; $script:magOvAt = $w
+      }
+    } else { $script:magOv = @{}; $script:magOvAt = [datetime]::MinValue }
+  } catch { }
+  if ($script:magOv.ContainsKey($d)) { return $script:magOv[$d] }
+  return $FLOOR_OVERRIDE[$d]
+}
 function Eco-Floor($t) {
   $h = $t.ToString('HH:mm')
-  $o = $FLOOR_OVERRIDE[$t.ToString('yyyy-MM-dd')]
+  $o = Day-Override $t
   if ($o -and $h -ge $o[0] -and $h -lt $o[1]) { return $o[2] }
   $v2 = $t -ge $ECO_V2_FROM            # 11/9 起早上與中午再降（Cliff 2026-11-06 15:54 同意）
   if ($h -lt '09:30') { if ($v2) { return 75 } else { return 90 } }    # 早上剛上班最悶
