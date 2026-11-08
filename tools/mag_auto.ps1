@@ -242,8 +242,14 @@ function Is-Summer($t) { $md = $t.Month * 100 + $t.Day; return ($md -ge 516 -and
 function Is-Eco($t) { return ($t -lt $ECO_UNTIL -and -not (Test-Path $EcoOff) -and $t.DayOfWeek -ne 'Saturday' -and $t.DayOfWeek -ne 'Sunday') }
 $ECO_V2_FROM = [datetime]'2026-11-09'
 # 平日時段基準（Cliff 2026-11-06 15:35 同意）：上限的「底」，熱房間多再往上加（最多 100%）
+# 單日特別設定（Cliff 用手機核准的測試）：日期 → 起、迄、上限底 %。只在那一天、那個時段生效，過了就自動回到上面的時段基準。
+$FLOOR_OVERRIDE = @{
+  '2026-11-09' = @('07:20', '09:30', 90)   # 星期一 7:20 開機測試，早上上限 90%（Cliff 2026-11-08 10:22）
+}
 function Eco-Floor($t) {
   $h = $t.ToString('HH:mm')
+  $o = $FLOOR_OVERRIDE[$t.ToString('yyyy-MM-dd')]
+  if ($o -and $h -ge $o[0] -and $h -lt $o[1]) { return $o[2] }
   $v2 = $t -ge $ECO_V2_FROM            # 11/9 起早上與中午再降（Cliff 2026-11-06 15:54 同意）
   if ($h -lt '09:30') { if ($v2) { return 75 } else { return 90 } }    # 早上剛上班最悶
   if ($h -lt '11:00') { return 65 }
