@@ -93,6 +93,10 @@ SCHED_CHECK_AT = "21:30"       # 每天檢查今晚製冰與明天融冰／磁�
 WD = "一二三四五六日"
 SCHED_NAMES = {"ice": "製冰", "melt": "融冰", "chu2": "磁浮"}
 CMD_RESULT = r"\\10.10.2.4\AC_Export\sched_cmd_result.json"   # 空調監控主機 sched_cmd.ps1（指令信箱）的執行結果
+# 程式更新信箱 update_cmd.ps1 的結果（2026-11-08）：本機（監控電腦）與空調監控主機各一份。state 鍵 → 檔案
+RESULT_FILES = {"cmd_seen": CMD_RESULT,
+                "upd_seen_bms": r"C:\BMS_Export\update_cmd_result.json",
+                "upd_seen_ac": r"\\10.10.2.4\AC_Export\update_cmd_result.json"}
 
 
 def is_summer(d):
@@ -289,10 +293,13 @@ class Notifier:
         days = self.state["days"]
         if ems and ems.get("updated", "")[:10] == day:
             live = bool(mag and mag.get("mode") == "LIVE" and not mag.get("off"))
-            prev_live = (days.get(day) or {}).get("live", False)
+            prev = days.get(day) or {}
+            prev_live = prev.get("live", False)
+            pv = ems.get("pv") or {}
+            pv_kwh = pv.get("today_kwh") if (pv.get("updated") or "")[:10] == day else prev.get("pv_kwh")
             days[day] = {"peak": ems.get("today_peak_kw"), "peak_at": ems.get("today_peak_at"),
                          "kwh": ems.get("today_kwh"), "mag": ems.get("mag_today"), "live": live or prev_live,
-                         "wd": now.weekday() < 5}
+                         "wd": now.weekday() < 5, "pv_kwh": pv_kwh}
         for k in sorted(days)[:-60]:              # 保留 60 天，給「節電成效」比較人工時期
             days.pop(k)
         hm = now.strftime("%H:%M")
@@ -304,7 +311,7 @@ class Notifier:
             if d:
                 m = d.get("mag") or {}
                 self._push(f"昨日摘要 {y[5:]}\n最高 15 分鐘需量 {_f(d['peak'], 1)} kW（{d['peak_at'] or '—'}）\n"
-                           f"用電 {_f(d['kwh'])} 度\n磁浮運轉 {_f(m.get('run_hours'), 1)} h・{_f(m.get('kwh'))} 度\n"
+                           + self._kwh_lines(d) + "\n" + f"磁浮運轉 {_f(m.get('run_hours'), 1)} h・{_f(m.get('kwh'))} 度\n"
                            + self._savings(y, d), force=True)
             else:
                 self._save()
@@ -320,6 +327,16 @@ class Notifier:
                 self._push("\n".join(lines), force=True)
             else:
                 self._save()
+
+    @staticmethod
+    def _kwh_lines(d):
+        """用電：台電電表（買電）＋太陽能（全部自發自用、在總表後面）＝ 總用電。"""
+        pv = d.get("pv_kwh")
+        if d.get("kwh") is None:
+            return "用電 — 度"
+        if pv is None:
+            return f"台電電表 {_f(d['kwh'])} 度\n總用電 —（太陽能資料缺）"
+        return f"台電電表 {_f(d['kwh'])} 度＋太陽能 {_f(pv)} 度\n總用電 {_f(d['kwh'] + pv)} 度"
 
     def _savings(self, day, d):
         """節電成效：自動控制當天的磁浮度數 vs 人工時期同類日（平日／假日）最近 10 天平均。"""
@@ -410,30 +427,35 @@ class Notifier:
                 self._save()
 
     def _cmd_result(self, now):
-        """指令信箱執行結果：每個指令 id＋狀態只推一次。每 30 秒看一次檔案。"""
+        """指令信箱／程式更新的執行結果：每個檔案的指令 id＋狀態只推一次。每 30 秒看一次。"""
         if (now - getattr(self, "_cmd_at", dt.datetime.min)).total_seconds() < 30:
             return
         self._cmd_at = now
-        try:
-            with open(CMD_RESULT, encoding="utf-8-sig") as f:
-                r = json.load(f)
-        except (OSError, ValueError):
-            return
-        key = f"{r.get('id')}|{r.get('status')}"
-        if not r.get("id") or key == self.state.get("cmd_seen"):
-            return
-        first = self.state.get("cmd_seen") is None
-        self.state["cmd_seen"] = key
-        if first and r.get("time", "")[:10] != now.date().isoformat():
-            self._save()
-            return                                   # 第一次啟動時不重推以前的舊結果
-        head = {"done": "✅ 排程指令已執行", "rejected": "⛔ 排程指令被擋下（沒有寫入）",
-                "failed": "❌ 排程指令沒有完成", "dry_run": "🧪 排程指令試跑（只檢查，沒有寫入）"}.get(r.get("status"), "排程指令")
-        lines = r.get("lines") or []
-        if isinstance(lines, str):
-            lines = [lines]
-        self._push(f"{head}（{r.get('time', '')[11:16]}，編號 {r.get('id')}）\n" + "\n".join(lines[:12]) +
-                   (f"\n說明：{r['note']}" if r.get("note") else ""), force=True)
+        for seen, path in RESULT_FILES.items():
+            try:
+                with open(path, encoding="utf-8-sig") as f:
+                    r = json.load(f)
+            except (OSError, ValueError):
+                continue
+            key = f"{r.get('id')}|{r.get('status')}"
+            if not r.get("id") or key == self.state.get(seen):
+                continue
+            first = self.state.get(seen) is None
+            self.state[seen] = key
+            if first and r.get("time", "")[:10] != now.date().isoformat():
+                self._save()
+                continue                                 # 第一次啟動時不重推以前的舊結果
+            if r.get("kind") == "update":
+                head = {"done": "🔧 程式已更新", "rejected": "⛔ 程式更新被擋下（沒有更動）",
+                        "failed": "❌ 程式更新沒有完成（沒有更動）"}.get(r.get("status"), "程式更新")
+            else:
+                head = {"done": "✅ 排程指令已執行", "rejected": "⛔ 排程指令被擋下（沒有寫入）",
+                        "failed": "❌ 排程指令沒有完成", "dry_run": "🧪 排程指令試跑（只檢查，沒有寫入）"}.get(r.get("status"), "排程指令")
+            lines = r.get("lines") or []
+            if isinstance(lines, str):
+                lines = [lines]
+            self._push(f"{head}（{r.get('time', '')[11:16]}，編號 {r.get('id')}）\n" + "\n".join(lines[:12]) +
+                       (f"\n說明：{r['note']}" if r.get("note") else ""), force=True)
 
     def tick(self, now, live_ok, snap, ac, mag, ems):
         if not self.enabled:
