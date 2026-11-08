@@ -21,6 +21,11 @@
 #   {"kind":"maglimit","date":"2026-11-09","from":"07:40","to":"09:30","pct":100}   設定（同一天再送一次會蓋掉）
 #   {"kind":"maglimit","date":"2026-11-09","action":"clear"}                         取消那一天
 #   只限今天起 7 天內的平日（星期一到五）、07:00–22:00、pct 20–100。
+# 活動登記（2026-11-08 起，Cliff 授權）：kind = event，在 C:\BMS_Export\ac_events.txt 加一行（mag_auto、fcu_guard 會照它預冷、提高上限、不關送風機）。
+#   {"kind":"event","date":"2026-11-12","from":"13:00","to":"17:00","zones":["會議廳","展演"]}                  登記
+#   {"kind":"event","date":"2026-11-12","from":"13:00","to":"17:00","zones":["會議廳"],"action":"remove"}       取消那一行
+#   場地只能是 會議廳 / 展演 / 訓練 / 全部；日期今天起 14 天內；時間 06:00–23:00。只登記，不會啟動冰機：
+#   寫完會讀那天的磁浮排程，沒涵蓋活動時段就在結果加 ⚠️ 提醒。
 # 停用：在 C:\BMS_Export 放 sched_cmd_off.txt。
 # 結果：C:\BMS_Export\sched_cmd_result.json（監控電腦讀到後推 LINE）與 sched_cmd.log。
 # 測試：powershell -ExecutionPolicy Bypass -File C:\BMS_Export\sched_cmd.ps1 -File 某指令.json -DryRun   （只檢查、不寫）
@@ -34,6 +39,10 @@ $DoneFile = Join-Path $Out 'sched_cmd_done.txt'
 $Log = Join-Path $Out 'sched_cmd.log'
 $ResultFile = Join-Path $Out 'sched_cmd_result.json'
 $MagOvFile = Join-Path $Out 'mag_limit_override.json'
+$EventFile = Join-Path $Out 'ac_events.txt'
+$EVENT_ZONES = @('會議廳', '展演', '訓練', '全部')
+function Event-Line($c) { return "$($c.date) $($c.from)-$($c.to) $(@($c.zones | ForEach-Object { "$_" }) -join ' ')" }
+function Event-Lines { if (Test-Path $EventFile) { return @(Get-Content $EventFile -Encoding UTF8 | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) } else { return @() } }
 $PREFIX = @{ ice = 'BCU_SCHI'; melt = 'BCU_SCHW'; chu2 = 'CHU2_SCH' }
 $NAME = @{ ice = '製冰'; melt = '融冰'; chu2 = '磁浮' }
 $WD = '一二三四五六日'
@@ -142,6 +151,19 @@ function MagOv-Load {
 function MagOv-Text($e) { if ($null -eq $e) { return '沒有特別設定' } else { return "$($e.from)–$($e.to) 上限 $($e.pct)%" } }
 function Check-Change($c, $now) {
   # 回傳 $null = 通過；否則回傳擋下的原因
+  if ("$($c.kind)" -eq 'event') {
+    $dt = [datetime]::MinValue
+    if (-not [datetime]::TryParseExact("$($c.date)", 'yyyy-MM-dd', $inv, [Globalization.DateTimeStyles]::None, [ref]$dt)) { return "日期 $($c.date) 格式不對（yyyy-MM-dd）" }
+    if ($dt -lt $now.Date -or $dt -gt $now.Date.AddDays(14)) { return "日期 $($c.date) 要在今天起 14 天內" }
+    if (-not (Hm-Ok $c.from) -or -not (Hm-Ok $c.to)) { return "時間格式不對（$($c.from)–$($c.to)，要 HH:MM）" }
+    if ("$($c.from)" -ge "$($c.to)") { return "開始要早於結束（$($c.from)–$($c.to)）" }
+    if ("$($c.from)" -lt '06:00' -or "$($c.to)" -gt '23:00') { return "要在 06:00–23:00 之內（$($c.from)–$($c.to)）" }
+    $zs = @($c.zones | ForEach-Object { "$_" })
+    if ($zs.Count -lt 1) { return "沒有寫場地（會議廳 / 展演 / 訓練 / 全部）" }
+    foreach ($z in $zs) { if ($EVENT_ZONES -notcontains $z) { return "場地 $z 不對（只能 會議廳 / 展演 / 訓練 / 全部）" } }
+    if (@('', 'add', 'remove') -notcontains "$($c.action)") { return "動作 $($c.action) 不對（登記不用寫，取消寫 remove）" }
+    return $null
+  }
   if ("$($c.kind)" -eq 'maglimit') {
     $dt = [datetime]::MinValue
     if (-not [datetime]::TryParseExact("$($c.date)", 'yyyy-MM-dd', $inv, [Globalization.DateTimeStyles]::None, [ref]$dt)) { return "日期 $($c.date) 格式不對（yyyy-MM-dd）" }
@@ -174,7 +196,7 @@ function Check-Change($c, $now) {
     if ($null -eq $cs) { return "照明迴路不對（要 all 或 $($LIGHT_CIRCUITS -join ',') 其中幾個）" }
     return $null
   }
-  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit）" }
+  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit / event）" }
   $d = 0; if (-not [int]::TryParse("$($c.day)", [ref]$d) -or $d -lt 1 -or $d -gt 7) { return "星期 $($c.day) 不對（1–7）" }
   if (-not (Hm-Ok $c.on) -or -not (Hm-Ok $c.off)) { return "時間格式不對（$($c.on)–$($c.off)，要 HH:MM）" }
   if ("$($c.en)" -ne '0' -and "$($c.en)" -ne '1') { return "勾選 en 只能 0 或 1" }
@@ -289,7 +311,7 @@ if (($exp - $apv).TotalHours -gt 24) { $res.status = 'rejected'; $res.lines = @(
 $changes = @($cmd.changes)
 if ($changes.Count -lt 1 -or $changes.Count -gt 21) { $res.status = 'rejected'; $res.lines = @('沒有要改的項目，或一次超過 21 筆'); Save-Result $res; exit 0 }
 $why = @()
-foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } else { "$(Day-Label $c.day) $e" }) } }
+foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } elseif ("$($c.kind)" -eq 'event') { "活動登記 $e" } else { "$(Day-Label $c.day) $e" }) } }
 if ($why.Count) { $res.status = 'rejected'; $res.lines = @('整筆指令沒有執行：') + $why; Save-Result $res; exit 0 }
 
 # ---- 寫入（WindowViewer 要開著） ----
@@ -298,6 +320,32 @@ if ($null -eq $probe) { $res.status = 'failed'; $res.lines = @('讀不到 InTouc
   ($res | ConvertTo-Json -Depth 6) | Out-File $ResultFile -Encoding utf8; Log "$($res.id) viewer down, will retry"; exit 0 }
 $allOk = $true
 foreach ($c in $changes) {
+  if ("$($c.kind)" -eq 'event') {
+    $line = Event-Line $c; $isRm = ("$($c.action)" -eq 'remove')
+    $label = "活動登記 $line"
+    $lines = @(Event-Lines); $has = ($lines -contains $line)
+    if ($DryRun) { $res.lines += "${label}：$(if ($isRm) { '取消' } else { '登記' })（目前$(if ($has) { '已有' } else { '沒有' })這一行，試跑，沒寫）"; continue }
+    if ($isRm) { $new = @($lines | Where-Object { $_ -ne $line }) } elseif ($has) { $new = $lines } else { $new = @($lines) + $line }
+    $tmp = "$EventFile.tmp"
+    $new | Out-File $tmp -Encoding utf8
+    Move-Item $tmp $EventFile -Force
+    $after = @(Event-Lines)
+    $ok = $(if ($isRm) { $after -notcontains $line } else { $after -contains $line })
+    if (-not $ok) { $allOk = $false; $res.lines += "${label}：寫入後讀回不符 ❌"; continue }
+    if ($isRm) { $res.lines += "${label}：已取消 ✅"; continue }
+    $res.lines += "${label}：$(if ($has) { '本來就登記了' } else { '已登記' }) ✅（開始前 30 分鐘預冷，上限至少 70%，送風機不會被關）"
+    # 看那天的磁浮排程有沒有涵蓋活動時段（只讀）
+    $dd = [int]([datetime]::ParseExact("$($c.date)", 'yyyy-MM-dd', $inv)).DayOfWeek; if ($dd -eq 0) { $dd = 7 }
+    $sv = [CticDdeW]::Read((Tags ([pscustomobject]@{ kind = 'chu2'; day = $dd })), 3000, 20000)
+    if ($null -ne $sv -and $sv.Count -ge 5) {
+      $n = @($sv | ForEach-Object { $x = 0.0; if ([double]::TryParse("$_", [Globalization.NumberStyles]::Float, $inv, [ref]$x)) { [int]$x } else { -1 } })
+      $on = '{0:00}:{1:00}' -f $n[0], $n[1]; $off = '{0:00}:{1:00}' -f $n[2], $n[3]
+      if ($n[4] -ne 1 -or $on -gt "$($c.from)" -or $off -lt "$($c.to)") {
+        $res.lines += "⚠️ $(Day-Label $dd)磁浮排程是 $(Fmt $sv)，沒有涵蓋活動 $($c.from)–$($c.to)，冰機不會自己開，要另外改排程"
+      } else { $res.lines += "$(Day-Label $dd)磁浮排程 $(Fmt $sv) 有涵蓋活動時段" }
+    }
+    continue
+  }
   if ("$($c.kind)" -eq 'maglimit') {
     $label = "磁浮負載上限 $($c.date)"
     $ov = MagOv-Load; $before = $ov["$($c.date)"]
