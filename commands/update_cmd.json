@@ -1,14 +1,14 @@
 {
-  "id": "2026-11-09-u11",
+  "id": "2026-11-09-u12",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-09T10:34:20+08:00",
-  "expires": "2026-11-09T18:34:20+08:00",
-  "note": "磁浮控制：上限遲滯（PR #45）＋熱房間防作弊（PR #46），Cliff 好執行",
-  "sha": "026c35408b05e75adda089b16639c8a66cd50bc0",
+  "approved_at": "2026-11-09T10:53:17+08:00",
+  "expires": "2026-11-09T18:53:17+08:00",
+  "note": "網站夜間異常：排除 CWP-7/8（B1 變電站冷氣 24 小時，PR #47，Cliff 好執行）",
+  "sha": "985d36cdec996dcae63670ae3cb6b90318df1e04",
   "files": [
     {
-      "pc": "ac",
-      "file": "tools/mag_auto.ps1"
+      "pc": "bms",
+      "file": "index.html"
     }
   ]
 }
