@@ -519,11 +519,13 @@ def _incomer_panel(tag):
     return m.group(1).upper() if m else None
 
 
-def panel_readings(panel):
+def panel_readings(panel, since=None):
     """迴路測試頁用：某一個盤最近約 20 分鐘、每分鐘的各迴路累積度數。panel 用網站寫法（L4C、R4C_1、EP3D_1_B）。
 
     "I" 是盤總表（0.01 度精度，比分路的 0.1 度準很多）；bg 是測試前 2 小時各迴路平常的 kW，
     用來扣掉「本來就會跳」的背景用電，避免把每 30 分鐘跳一次 0.1 度的迴路誤判成測試負載。
+    since＝按「開始測試」的時間：平常用電一律算到這個時間點為止，測試中不會越算越高。
+    base_kw＝測試前 2 小時盤總表每 15 分鐘 kW 裡「第二低」的那一段，不會被前一次測試（吹風機）墊高。
     """
     c = CIRC["obj"]
     if not c or not c.recent:
@@ -551,21 +553,83 @@ def panel_readings(panel):
     rows, panels = [], set()
     for t, vals in list(c.recent):
         rows.append([t.strftime("%Y-%m-%d %H:%M:%S"), pick(vals, panels)])
-    bg = {}
+    bg, base_kw = {}, None
     try:
         t_now = c.recent[-1][0]
-        hist = [(t, v) for t, v in c.rows(t_now) if t <= t_now - dt.timedelta(minutes=10)]
-        if hist:
-            t1, v1 = hist[-1]
-            older = [(t, v) for t, v in hist if t <= t1 - dt.timedelta(minutes=90)]
-            if older:
-                t0, v0 = older[-1]
-                hrs = (t1 - t0).total_seconds() / 3600
-                a, b = pick(v0), pick(v1)
-                bg = {k: round((b[k] - a[k]) / hrs, 3) for k in b if k in a and 0 <= b[k] - a[k] < 1000}
+        t_ref = t_now
+        if since:
+            try:
+                t_ref = min(t_now, dt.datetime.strptime(since, "%Y-%m-%d %H:%M:%S"))
+            except ValueError:
+                pass
+        hist = [(t, pick(v)) for t, v in c.rows(t_now)
+                if t_ref - dt.timedelta(minutes=135) <= t <= t_ref - dt.timedelta(minutes=5)]
+        if len(hist) >= 2:
+            (t0, a), (t1, b) = hist[0], hist[-1]
+            hrs = (t1 - t0).total_seconds() / 3600
+            if hrs >= 1:
+                bg = {k: round((b[k] - a[k]) / hrs, 3) for k in b
+                      if k != "I" and k in a and 0 <= b[k] - a[k] < 1000}
+            seg = []
+            for (ta, va), (tb, vb) in zip(hist, hist[1:]):
+                m = (tb - ta).total_seconds() / 60
+                if 5 <= m <= 30 and "I" in va and "I" in vb and 0 <= vb["I"] - va["I"] < 1000:
+                    seg.append((vb["I"] - va["I"]) / m * 60)
+            if seg:
+                seg.sort()
+                base_kw = round(seg[1] if len(seg) >= 3 else seg[0], 3)
     except Exception as e:                    # 背景用電算不出來不影響測試頁
         log(f"迴路測試頁背景用電計算失敗：{e}")
-    return {"panel": want, "rows": rows, "panels": sorted(panels), "bg": bg}
+    return {"panel": want, "rows": rows, "panels": sorted(panels), "bg": bg, "base_kw": base_kw}
+
+
+TESTLOG_LOCK = threading.Lock()
+TESTLOG_NAME = "迴路測試登記.csv"           # 存在 BMS自動匯出（會同步到雲端硬碟），事後用 15 分鐘讀值判斷
+
+
+def testlog_path():
+    c = CIRC["obj"]
+    d = (c.out_dir if c and c.out_dir else None) or HERE
+    return os.path.join(d, TESTLOG_NAME)
+
+
+def _clean(v, n):
+    return re.sub(r"[\r\n\t]", " ", str(v or "")).strip()[:n]
+
+
+def testlog_add(data):
+    """「插了就走」登記：同仁在現場按一下，記下伺服器時間、動作、房間。只追加，不改舊資料。"""
+    import csv
+    act = data.get("action")
+    tid = str(data.get("id") or "")
+    if act not in ("start", "stop") or not re.fullmatch(r"[0-9A-Za-z_-]{1,40}", tid):
+        return None
+    room, note, who = _clean(data.get("room"), 40), _clean(data.get("note"), 80), _clean(data.get("who"), 20)
+    if act == "start" and not room:
+        return None
+    row = [dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), act, tid, room, note, who]
+    path = testlog_path()
+    with TESTLOG_LOCK:
+        if os.path.exists(path) and os.path.getsize(path) > 5_000_000:
+            return None
+        new = not os.path.exists(path)
+        with open(path, "a", newline="", encoding="utf-8-sig" if new else "utf-8") as f:
+            w = csv.writer(f)
+            if new:
+                w.writerow(["時間", "動作", "編號", "房間或位置", "備註", "登記人"])
+            w.writerow(row)
+    return row
+
+
+def testlog_recent(days=2):
+    import csv
+    path = testlog_path()
+    if not os.path.exists(path):
+        return []
+    cut = (dt.datetime.now() - dt.timedelta(days=days)).strftime("%Y-%m-%d")
+    with TESTLOG_LOCK, open(path, encoding="utf-8-sig") as f:
+        rows = [r for r in csv.reader(f)][1:]
+    return [r for r in rows if len(r) >= 6 and r[0] >= cut]
 
 
 LOCAL_FLAG = b"<script>window.EMS_LOCAL=true</script>"
@@ -591,11 +655,14 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/ems/panel":
             from urllib.parse import parse_qs
             q = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            data = panel_readings((q.get("p") or [""])[0])
+            data = panel_readings((q.get("p") or [""])[0], (q.get("since") or [None])[0])
             if data is None:
                 self.send_error(503, "Circuit data not ready yet")
                 return
             body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+            ctype = CTYPES[".json"]
+        elif path == "/api/ems/testlog":
+            body = json.dumps(testlog_recent(), ensure_ascii=False).encode("utf-8")
             ctype = CTYPES[".json"]
         elif path in ("/api/ems/live.json", "/api/ems/rooms.json"):
             with STATE_LOCK:
@@ -620,6 +687,34 @@ class Handler(BaseHTTPRequestHandler):
             ctype = CTYPES.get(os.path.splitext(full)[1].lower(), "application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type", ctype)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        ip = self.client_address[0]
+        if ip.startswith("::ffff:"):
+            ip = ip[7:]
+        if not allowed(ip):
+            self.send_error(403, "Only the monitoring PC and AC PC may view this site")
+            return
+        if self.path.split("?", 1)[0] != "/api/ems/testlog":
+            self.send_error(404)
+            return
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            data = json.loads(self.rfile.read(min(n, 4096)).decode("utf-8")) if 0 < n <= 4096 else None
+            row = testlog_add(data) if isinstance(data, dict) else None
+        except Exception as e:
+            log(f"迴路測試登記失敗：{e}")
+            row = None
+        if row is None:
+            self.send_error(400, "Bad test log entry")
+            return
+        body = json.dumps(row, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", CTYPES[".json"])
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()

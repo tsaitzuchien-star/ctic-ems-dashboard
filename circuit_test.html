@@ -20,10 +20,18 @@ tr.top td{background:rgba(245,158,11,.18)}tr.top td.v{color:var(--hi);font-weigh
 .tip b{color:var(--t)}
 td.how{font-size:13px;color:var(--t);min-width:180px}td.how em{font-style:normal;color:var(--hi)}
 .pv{background:var(--card);border-radius:10px;padding:12px 14px;margin-top:10px;font-size:14px}.pv b{font-size:18px}.pv.yes{border:2px solid var(--ok)}.pv.no{border:2px solid var(--bad)}.pv .m{color:var(--m);font-size:12px}
+.log{background:var(--card);border-radius:10px;padding:10px 14px;margin:10px 0}.log h2{font-size:16px;margin:0 0 6px}.log .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.log input{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:#0b1220;color:var(--t);min-width:0;flex:1 1 140px}.log ul{list-style:none;padding:0;margin:8px 0 0;font-size:14px}.log li{padding:6px 0;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center}.log li .m{color:var(--m);font-size:12px}.log .open{color:var(--hi)}
 .empty{background:var(--card);border-radius:10px;padding:16px;color:var(--m);text-align:center}
 </style></head><body><div class="wrap">
 <h1>迴路測試：找出這條線是哪一間的</h1>
 <div class="sub">每分鐘讀一次全部迴路電表。先看上方「盤總表」判斷負載在不在這個盤（總表精度 0.01 度，最準），再看下方哪一迴多跳了。分路電表每格 0.1 度，1.2 kW 吹風機約 5 分鐘才跳一格。</div>
+<div class="log" id="logbox">
+ <h2>插了就走登記（不用盯畫面）</h2>
+ <div class="m sub" style="margin:0 0 8px">在房間插上吹風機或電暖器後按「插上了」，10–15 分鐘後拔掉再按「拔掉了」。系統會記下時間，事後從電表資料一次判斷是哪個盤、哪一迴。不同棟可以同時測，同一區請一次只測一個點。</div>
+ <div class="row"><input id="lgRoom" list="rooms" placeholder="房間或位置，例如 A114 門邊插座"><input id="lgNote" placeholder="備註（可不填）"><button class="go" id="lgStart">插上了</button></div>
+ <datalist id="rooms"></datalist>
+ <ul id="lgList"></ul>
+</div>
 <div class="bar">
  <label>配電盤 <select id="panel"></select></label>
  <button class="go" id="start">開始測試</button>
@@ -62,7 +70,7 @@ function roomsOf(t){return new Set((t||'').match(/[ABC]\d{3}/g)||[])}
 async function poll(){
   if(!panel) return;
   let d;
-  try{ const r = await fetch('/api/ems/panel?p='+encodeURIComponent(panel),{cache:'no-store'});
+  try{ const r = await fetch('/api/ems/panel?p='+encodeURIComponent(panel)+(base?'&since='+encodeURIComponent(baseT):''),{cache:'no-store'});
        if(!r.ok){ $('st').textContent='迴路資料還沒準備好（程式剛啟動約需 1–2 分鐘）'; return; }
        d = await r.json(); }catch(e){ $('st').textContent='連不到監控電腦'; return; }
   if($('panel').options.length<2) fillPanels(d.panels);
@@ -76,6 +84,7 @@ async function poll(){
   const bg = d.bg||{};
   const T = s=>new Date(s.replace(' ','T'));
   // 盤總表：測試前的平常 kW vs 開始後的 kW
+  if(base && d.base_kw!=null) baseKw = d.base_kw;   // 測試前 2 小時的穩定平常值，不會被前一次測試墊高
   const pv = $('pv');
   if(now.I==null){ pv.style.display='block'; pv.className='pv'; pv.innerHTML='這個盤<b>沒有盤總表讀數</b>，只能看下面各迴路（每格 0.1 度，要等 5–10 分鐘）。'; }
   else if(!base){
@@ -99,7 +108,10 @@ async function poll(){
   const hrs = base ? (T(tNow)-T(baseT))/3600e3 : 0;
   let maxD = 0; const dl = {};
   const ex = {};
-  for(const n of ns){ if(base && base[n]!=null){ dl[n]=Math.round((now[n]-base[n])*10)/10; ex[n]=Math.floor((dl[n]-(bg[n]||0)*hrs)*10+1e-6)/10; maxD=Math.max(maxD,ex[n]); } }
+  const exv = {};   // 扣掉平常後實際多出的度數（小數）；分路每格 0.1 度，多出 ≥0.08 就算多跳一格
+  for(const n of ns){ if(base && base[n]!=null){ dl[n]=Math.round((now[n]-base[n])*10)/10; exv[n]=dl[n]-(bg[n]||0)*hrs; ex[n]=Math.max(-0.9,Math.round(exv[n]*10)/10); } }
+  const hit = ns.filter(n=>exv[n]>=0.08); maxD = hit.length ? Math.max(...hit.map(n=>exv[n])) : 0;
+  const best = hit.filter(n=>exv[n]===maxD);
   const mode = $('mode').value, act = actOf(panel);
   let shown = 0;
   const html = ns.map(n=>{
@@ -107,7 +119,7 @@ async function poll(){
     const b = (BILL[lk]||{})[n]||'', s = (site[lk+'_'+n]||[]).join('、');
     const rb=[...roomsOf(b)], rs=[...roomsOf(s)], differ = rb.length&&rs.length&&!rb.some(x=>rs.includes(x));
     const orphan = !b && !s && kw!=null && kw>=0.3;
-    const top = base && maxD>=0.1 && ex[n]===maxD;
+    const top = base && best.includes(n);
     if(mode==='p' && !differ && !orphan && !top) return '';
     if(mode==='l' && !b && !s && !top) return '';
     shown++;
@@ -118,7 +130,7 @@ async function poll(){
     return `<tr class="${top?'top':''}"><td class="n">${n}</td><td class="v">${base?(dl[n]??'-'):'-'}</td><td class="v">${base?(ex[n]??'-'):'-'}</td><td class="v">${kw==null?'-':kw.toFixed(2)}</td><td class="${differ?'diff':''}">${b||'<span class=same>—</span>'}</td><td class="${differ?'diff':''}">${s||'<span class=same>—</span>'}</td><td class="how">${how}</td></tr>`;
   }).join('');
   $('tb').innerHTML = shown ? html : `<tr><td colspan="7"><div class="empty">${mode==='p'?'這個盤沒有收費表和網站對不上的迴路，也沒有「沒登記卻有用電」的迴路。<br>想看全部請把「顯示」改成「全部迴路」。':'沒有符合的迴路'}</div></td></tr>`;
-  $('st').textContent = (base?`測試中：從 ${baseT.slice(11,16)} 開始，最新讀值 ${tNow.slice(11,16)}。`+(maxD>=0.1?`扣掉平常用電後，多跳最多的是 ${ns.filter(n=>ex[n]===maxD).join('、')} 號（多 ${maxD} 度）。`:'各迴路還沒有比平常多跳，請再等一下。'):`尚未開始。最新讀值 ${tNow.slice(11,16)}，按「開始測試」記下起點。`)+'（每 30 秒自動更新）';
+  $('st').textContent = (base?`測試中：從 ${baseT.slice(11,16)} 開始，最新讀值 ${tNow.slice(11,16)}。`+(best.length?`扣掉平常用電後，多跳最多的是 ${best.join('、')} 號（多約 ${(Math.round(maxD*10)/10).toFixed(1)} 度）。`:'各迴路還沒有比平常多跳，請再等一下。'):`尚未開始。最新讀值 ${tNow.slice(11,16)}，按「開始測試」記下起點。`)+'（每 30 秒自動更新）';
   let kwI=null; { const ri=rows.filter(r=>r[1].I!=null); if(ri.length>1){ const a=ri[0], z=ri[ri.length-1], m=(T(z[0])-T(a[0]))/60e3; if(m>=5) kwI=(z[1].I-a[1].I)/m*60; } }
   last = {t:tNow, v:{...now, I:rows[rows.length-1][1].I}, kwI};
 }
@@ -132,10 +144,42 @@ $('panel').onchange = ()=>{ panel=$('panel').value; base=null; baseKw=null; hist
 $('start').onclick = ()=>{ if(last){ base={...last.v}; baseT=last.t; baseKw=last.kwI; poll(); } };
 $('mode').onchange = ()=>poll();
 $('reset').onclick = ()=>{ base=null; baseKw=null; poll(); };
+// ── 插了就走登記 ──
+function fillRooms(){
+  const set = new Set();
+  for(const v of Object.values(BILL)) for(const t of Object.values(v)) for(const m of (t.match(/[ABC]\d{3}/g)||[])) set.add(m);
+  for(const k in site) for(const t of site[k]) { const m=t.match(/^[ABC]\d{3}/); if(m) set.add(m[0]); }
+  $('rooms').innerHTML=[...set].sort().map(r=>`<option value="${r}">`).join('');
+}
+async function lgPost(o){
+  const r = await fetch('/api/ems/testlog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});
+  if(!r.ok) throw new Error(r.status);
+  return r.json();
+}
+const esc = t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function lgLoad(){
+  let ev=[]; try{ ev = await (await fetch('/api/ems/testlog',{cache:'no-store'})).json(); }catch(e){ $('lgList').innerHTML='<li class=m>讀不到登記紀錄</li>'; return; }
+  const t = {}; for(const [tm,act,id,room,note] of ev){ t[id]=t[id]||{id}; if(act==='start') Object.assign(t[id],{s:tm,room,note}); else t[id].e=tm; }
+  const today = new Date().toLocaleDateString('sv');
+  const list = Object.values(t).filter(x=>x.s && x.s.slice(0,10)===today).sort((a,b)=>b.s.localeCompare(a.s));
+  $('lgList').innerHTML = list.length ? list.map(x=>{
+    const m = x.e ? Math.round((new Date(x.e.replace(' ','T'))-new Date(x.s.replace(' ','T')))/60e3) : Math.round((Date.now()-new Date(x.s.replace(' ','T')))/60e3);
+    return `<li><span><b>${esc(x.room)}</b> ${x.note?'<span class=m>'+esc(x.note)+'</span>':''}<br><span class=m>${x.s.slice(11,16)} 插上`+(x.e?`，${x.e.slice(11,16)} 拔掉（${m} 分鐘）`:`，<span class=open>已插 ${m} 分鐘</span>`)+`</span></span>`+(x.e?'':`<button class="stop" data-id="${esc(x.id)}">拔掉了</button>`)+`</li>`;
+  }).join('') : '<li class=m>今天還沒有登記</li>';
+  for(const b of $('lgList').querySelectorAll('button[data-id]')) b.onclick = async()=>{ b.disabled=true; try{ await lgPost({action:'stop',id:b.dataset.id}); }catch(e){ alert('登記失敗，請再按一次'); } lgLoad(); };
+}
+$('lgStart').onclick = async()=>{
+  const room=$('lgRoom').value.trim(); if(!room){ $('lgRoom').focus(); return; }
+  $('lgStart').disabled=true;
+  try{ await lgPost({action:'start',id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),room,note:$('lgNote').value.trim()}); $('lgRoom').value=''; $('lgNote').value=''; }
+  catch(e){ alert('登記失敗，請再按一次'); }
+  $('lgStart').disabled=false; lgLoad();
+};
 (async()=>{
   panel = new URLSearchParams(location.search).get('p') || 'L4C';
   await loadSite();
   $('panel').innerHTML = `<option>${panel}</option>`;
+  fillRooms(); lgLoad(); setInterval(lgLoad, 60000);
   await poll(); $('panel').value = panel;
   setInterval(poll, 30000);
 })();
