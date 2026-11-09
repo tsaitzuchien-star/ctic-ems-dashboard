@@ -264,10 +264,42 @@ function Day-Override($t) {
   if ($script:magOv.ContainsKey($d)) { return $script:magOv[$d] }
   return $FLOOR_OVERRIDE[$d]
 }
+# 涼爽日模式（Cliff 2026-11-09 08:22「好要做」）：當天預報最高溫 ≤ 25°C，或有雨（≥ 5 mm）且最高溫 ≤ 27°C
+# → 16:00 前各時段上限底下修 20 個百分點（最低 30%），早上出水也提高到 13–14°C。熱房間回饋照常往上加。
+# 指令信箱的單日上限（mag_limit_override.json）仍然最優先。強制開／關：C:\BMS_Export\cool_on.txt／cool_off.txt
+# 預報：Open-Meteo（與需量預測同座標），每天抓一次存 cool_day.json；抓不到就當一般日。
+$COOL_TMAX = 25.0; $COOL_RAIN_MM = 5.0; $COOL_RAIN_TMAX = 27.0; $COOL_DROP = 20
+$COOL_URL = 'https://api.open-meteo.com/v1/forecast?latitude=23.936537&longitude=120.697917&daily=temperature_2m_max,precipitation_sum&timezone=Asia%2FTaipei&forecast_days=1'
+$CoolFile = Join-Path $Out 'cool_day.json'; $script:cool = $null; $script:coolTry = [datetime]::MinValue
+function Cool-Day($t) {
+  if (Test-Path (Join-Path $Out 'cool_off.txt')) { return $false }
+  if (Test-Path (Join-Path $Out 'cool_on.txt')) { return $true }
+  $d = $t.ToString('yyyy-MM-dd')
+  if (-not $script:cool -or $script:cool.date -ne $d) {
+    try { if (Test-Path $CoolFile) { $c = Get-Content $CoolFile -Raw -Encoding UTF8 | ConvertFrom-Json; if ($c.date -eq $d) { $script:cool = $c } } } catch { }
+  }
+  if ((-not $script:cool -or $script:cool.date -ne $d) -and ($t - $script:coolTry).TotalMinutes -ge 30) {
+    $script:coolTry = $t
+    try {
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      $w = Invoke-RestMethod -Uri $COOL_URL -TimeoutSec 15
+      $tmax = [double]$w.daily.temperature_2m_max[0]; $rain = [double]$w.daily.precipitation_sum[0]
+      $isCool = ($tmax -le $COOL_TMAX) -or ($rain -ge $COOL_RAIN_MM -and $tmax -le $COOL_RAIN_TMAX)
+      $script:cool = [pscustomobject]@{ date = $d; tmax = $tmax; rain = $rain; cool = $isCool; at = $t.ToString('HH:mm') }
+      ($script:cool | ConvertTo-Json -Compress) | Out-File $CoolFile -Encoding utf8
+    } catch { }
+  }
+  return ($script:cool -and $script:cool.date -eq $d -and $script:cool.cool)
+}
 function Eco-Floor($t) {
   $h = $t.ToString('HH:mm')
   $o = Day-Override $t
   if ($o -and $h -ge $o[0] -and $h -lt $o[1]) { return $o[2] }
+  $f = Eco-Floor-Base $t $h
+  if ($h -lt '16:00' -and (Cool-Day $t)) { return [math]::Max(30, $f - $COOL_DROP) }   # 涼爽日
+  return $f
+}
+function Eco-Floor-Base($t, $h) {
   $v2 = $t -ge $ECO_V2_FROM            # 11/9 起早上與中午再降（Cliff 2026-11-06 15:54 同意）
   if ($h -lt '09:30') { if ($v2) { return 75 } else { return 90 } }    # 早上剛上班最悶
   if ($h -lt '11:00') { return 65 }
@@ -277,6 +309,7 @@ function Eco-Floor($t) {
   return 30                            # 17:00–18:00；18:00 後另有固定 30%
 }
 function Sp-Band($t) {   # 出水設定季節上下限
+  if ((Is-Eco $t) -and (Cool-Day $t)) { return @(13.0, 14.0) }   # 涼爽日：早上也 13–14°C
   if (Is-Eco $t) { if ($t.ToString('HH:mm') -lt '09:30') { return @(12.0, 13.0) } else { return @(13.0, 14.0) } }   # 早上出水冷一點除濕；白天上限 14（15:13 Cliff）
   $md = $t.Month * 100 + $t.Day
   if ($md -ge 516 -and $md -le 1015) { return @(10.5, 11.5) }
@@ -345,7 +378,7 @@ function Save($now, $d, $m, $cur, $tgt, $action, $note) {
     sp_read = $(if ($m) { $m.sp1 }); sp = $spE; floors = $(if ($fcu) { $fcu.floors }); dewpoint = $(if ($fcu) { R1 $fcu.dew }); oa_n = $(if ($fcu) { $fcu.oa_n }); fan_check = $(if ($fcu) { $fcu.fan })
     chws_c = $(if ($m) { R1 $m.chws }); chws_target = $tgt; fcu_on = $(if ($fcu) { $fcu.on })
     hot_share = $(if ($fcu -and $null -ne $fcu.hot) { [math]::Round($fcu.hot, 2) }); ratio = $r
-    manual_hold = ($now -lt $manualUntil); event = $evtText; event_hot = $evtHot; note = $note; last_action = $lastAction; last_action_at = $lastActionAt
+    manual_hold = ($now -lt $manualUntil); cool_day = $(if ($script:cool) { $script:cool }); event = $evtText; event_hot = $evtHot; note = $note; last_action = $lastAction; last_action_at = $lastActionAt
   }
   ($st | ConvertTo-Json -Compress -Depth 5) | Out-File (Join-Path $Out 'mag_auto_status.json') -Encoding utf8
   if ($action) { Write-Host $row }
