@@ -9,7 +9,8 @@
 #   製冰有勾時不能跑進 07:30–22:00；融冰、磁浮不能跨午夜，且要在 07:00–22:00 之內；
 #   夏月（5/16–10/15）星期一到五磁浮有勾時，停止時間不能晚於 16:00。
 #   指令要有 id、過期時間（核准後 24 小時內），同一個 id 只做一次。指令裡寫 "dry_run": true 就只檢查、不寫。
-# 送風機（2026-11-07 起）：kind = fcu，只限下面 $FCU_ALLOW 列的房間（目前只有 B239 = SG_2F31_P25）。
+# 送風機（2026-11-07 起）：kind = fcu，只限下面 $FCU_ALLOW 列的房間（B239；2026-11-09 起加 C303，Cliff 授權）。
+#   units 可寫 "all"（該房間全部台數）；C303 跨兩個面板，台號寫 P23_FCU01 這種格式。
 #   {"kind":"fcu","room":"B239","units":["FCU01","FCU02"],"action":"off"|"on"|"setT","value":26}
 #   action off/on 寫 _Run（0/1），所有台一起送出，最多等 180 秒看風速狀態確認；setT 只允許 24–28 °C，立即讀回。
 #   平日 18:00–07:00 遠端開啟時，若當晚加班名單檔已存在，把房號加進去，避免 fcu_guard 又把它關掉。
@@ -47,7 +48,20 @@ $PREFIX = @{ ice = 'BCU_SCHI'; melt = 'BCU_SCHW'; chu2 = 'CHU2_SCH' }
 $NAME = @{ ice = '製冰'; melt = '融冰'; chu2 = '磁浮' }
 $WD = '一二三四五六日'
 $ICE_OK_FROM = '22:00'; $ICE_OK_TO = '07:30'
-$FCU_ALLOW = @{ 'B239' = 'SG_2F31_P25' }     # 房號 → InTouch 面板（Cliff 授權的房間才放進來）
+$FCU_ALLOW = @{ 'B239' = 'SG_2F31_P25'; 'C303' = 'SG_3F31' }     # 房號 → InTouch 點位前綴（Cliff 授權的房間才放進來）
+$FCU_UNITS = @{                                                     # 房號 → 可以動的台號（前綴 + '_' + 台號 = 點位）
+  'B239' = @('FCU01', 'FCU02')
+  'C303' = @('P23_FCU01','P23_FCU02','P23_FCU03','P23_FCU04','P23_FCU05','P23_FCU06','P23_FCU07','P23_FCU08',
+             'P24_FCU01','P24_FCU02','P24_FCU03','P24_FCU04','P24_FCU05','P24_FCU06')   # 環電（2026-11-09 Cliff 要求設 25°C）
+}
+function Fcu-Units($c) {
+  $all = @($FCU_UNITS["$($c.room)"])
+  if ("$($c.units)" -eq 'all') { return $all }
+  $us = @($c.units | ForEach-Object { "$_" })
+  if ($us.Count -lt 1) { return $null }
+  foreach ($u in $us) { if ($all -notcontains $u) { return $null } }
+  return $us
+}
 $FCU_SET_MIN = 24; $FCU_SET_MAX = 28
 $LIGHT_ROOM = 'B330'
 $LIGHT_CIRCUITS = @('EL3C_13','EL3C_14','EL3C_15','EL3C_16','EL3C_17','EL3C_18','EL3C_19',
@@ -178,9 +192,8 @@ function Check-Change($c, $now) {
   }
   if ("$($c.kind)" -eq 'fcu') {
     if (-not $FCU_ALLOW.ContainsKey("$($c.room)")) { return "送風機房間 $($c.room) 不在授權清單（目前只有 $($FCU_ALLOW.Keys -join ', ')）" }
-    $us = @($c.units)
-    if ($us.Count -lt 1 -or $us.Count -gt 9) { return "送風機台數不對" }
-    foreach ($u in $us) { if ("$u" -notmatch '^FCU0[1-9]$') { return "送風機編號 $u 不對（FCU01–FCU09）" } }
+    $us = Fcu-Units $c
+    if ($null -eq $us) { return "送風機台號不對（$($c.room) 只能是 all 或 $(@($FCU_UNITS["$($c.room)"]) -join ', ')）" }
     if (@('off','on','setT') -notcontains "$($c.action)") { return "送風機動作 $($c.action) 不對（off / on / setT）" }
     if ("$($c.action)" -eq 'setT') {
       $v = 0.0
@@ -368,7 +381,7 @@ foreach ($c in $changes) {
     $what = $(if ($act -eq 'off') { '關閉' } elseif ($act -eq 'on') { '開啟' } else { "設定 $($c.value)°C" })
     # 先讀全部台數的現況；setT 逐台寫並讀回；on/off 一次對所有台送出，再一起等風速狀態（現場實測：狀態回報比實際慢 60–100 秒以上）
     $pend = @()
-    foreach ($u in @($c.units)) {
+    foreach ($u in @(Fcu-Units $c)) {
       $label = "$($c.room) $u"
       $before = Fcu-Read $panel $u
       if ($null -eq $before -or $null -eq $before.run) { $allOk = $false; $res.lines += "$label：讀不到這台送風機，沒有寫入 ❌"; continue }
