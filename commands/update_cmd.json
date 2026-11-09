@@ -1,14 +1,14 @@
 {
-  "id": "2026-11-09-u12",
+  "id": "2026-11-09-u13",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-09T10:53:17+08:00",
-  "expires": "2026-11-09T18:53:17+08:00",
-  "note": "網站夜間異常：排除 CWP-7/8（B1 變電站冷氣 24 小時，PR #47，Cliff 好執行）",
-  "sha": "985d36cdec996dcae63670ae3cb6b90318df1e04",
+  "approved_at": "2026-11-09T11:36:01+08:00",
+  "expires": "2026-11-09T17:36:23+08:00",
+  "note": "指令信箱送風機加入 C303（PR #48，Cliff 好執行）",
+  "sha": "53694fa98467adf8a3fe42001435b3e2a9b1c500",
   "files": [
     {
-      "pc": "bms",
-      "file": "index.html"
+      "pc": "ac",
+      "file": "tools/sched_cmd.ps1"
     }
   ]
 }
