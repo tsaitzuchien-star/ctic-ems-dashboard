@@ -216,16 +216,18 @@ function Read-Fcu {
   $floors = [ordered]@{}
   foreach ($k in ($fl.Keys | Sort-Object)) { $floors[$k] = [ordered]@{ n = $fl[$k].n; hot = [math]::Round($fl[$k].hot / $fl[$k].n, 2) } }
   # 室外露點：空調箱外氣溫濕度感測器，取有效值的中位數（Magnus 公式）
-  $dps = @()
+  $dps = @(); $ots = @()
   foreach ($k in $oa.Keys) {
     $t = $oa[$k].OAT; $rh = $oa[$k].OAH
+    if ($t -gt 0 -and $t -lt 45) { $ots += $t }
     if ($t -gt 0 -and $t -lt 45 -and $rh -gt 15 -and $rh -le 100) {
       $g = [math]::Log($rh / 100) + 17.62 * $t / (243.12 + $t); $dps += 243.12 * $g / (17.62 - $g)
     }
   }
   $dew = $null; if ($dps.Count) { $s = @($dps | Sort-Object); $dew = $s[[int][math]::Floor(($s.Count - 1) / 2)] }
+  $oat = $null; if ($ots.Count) { $s = @($ots | Sort-Object); $oat = $s[[int][math]::Floor(($s.Count - 1) / 2)] }
   [pscustomobject]@{ on = $on; n = $n; hot = $(if ($n) { $hot / $n } else { $null }); dt = $(if ($n) { $sum / $n } else { $null })
-                     floors = $floors; zone = $zrooms; dew = $dew; oa_n = $dps.Count; fan = "$fanState off=$fanOff of=$($runKeys.Count) $([int]$sw.Elapsed.TotalSeconds)s" }
+                     floors = $floors; zone = $zrooms; dew = $dew; oat = $oat; oa_n = $dps.Count; fan = "$fanState off=$fanOff of=$($runKeys.Count) $([int]$sw.Elapsed.TotalSeconds)s" }
 }
 
 function Read-Demand {
@@ -264,10 +266,90 @@ function Day-Override($t) {
   if ($script:magOv.ContainsKey($d)) { return $script:magOv[$d] }
   return $FLOOR_OVERRIDE[$d]
 }
+# 涼爽日模式 v2（Cliff 2026-11-09 08:22「好要做」、08:24 補充）：三個來源一起、整天持續判斷，不是早上判一次就定案
+#   1) ECMWF 預報（Open-Meteo ecmwf_ifs025，與需量預測同座標）：今天剩下到 16:00 的最高溫、今天雨量，每 3 小時更新
+#   2) 現場外氣溫濕度計（空調箱 OAT/OAH，取有效值中位數）：現在外氣溫度、露點
+#   3) 室內送風機：最熱樓層熱房間比例、4 樓熱房間比例
+# 進入（全部成立）：預報剩餘最高 ≤ 25°C（或雨 ≥ 5 mm 且 ≤ 27°C）、外氣 ≤ 25°C、露點 ≤ 19°C、最熱樓層熱房間 < 15% 且 4 樓 < 30%
+# 離開（任一成立）：預報剩餘最高 > 27°C、外氣 > 27°C、露點 > 21°C、最熱樓層熱房間 ≥ 25% 或 4 樓 ≥ 40%
+# 切換後至少維持 30 分鐘（避免來回跳）。很涼（預報 ≤ 22°C 且外氣 ≤ 22°C）再多降 10 點。
+# 涼爽時：16:00 前上限底 −20（很涼 −30，最低 30%）；出水 13–14°C（很涼 13.5–14）。熱房間回饋照常往上加。
+# 指令信箱的單日上限（mag_limit_override.json）仍然最優先。強制開／關：C:\BMS_Export\cool_on.txt／cool_off.txt
+# 預報抓不到：只用外氣＋室內（外氣 ≤ 23°C 才算涼）；外氣也讀不到 → 一般日。
+$COOL_TMAX = 25.0; $COOL_RAIN_MM = 5.0; $COOL_RAIN_TMAX = 27.0; $COOL_EXIT_T = 27.0; $COOL_COLD_T = 22.0
+$COOL_DEW_IN = 19.0; $COOL_DEW_OUT = 21.0; $COOL_HOLD_MIN = 30; $COOL_DROP = 20; $COOL_DROP2 = 30
+$COOL_URL = 'https://api.open-meteo.com/v1/forecast?latitude=23.936537&longitude=120.697917&hourly=temperature_2m,precipitation&daily=temperature_2m_max,precipitation_sum&timezone=Asia%2FTaipei&forecast_days=1'
+$CoolFile = Join-Path $Out 'cool_day.json'; $script:wx = $null; $script:wxTry = [datetime]::MinValue
+$script:coolLvl = 0; $script:coolSince = [datetime]::MinValue; $script:cool = $null
+function Get-Wx($t) {   # ECMWF 預報，每 3 小時更新；失敗 20 分鐘後再試；先用 ECMWF，不行用預設模式
+  $d = $t.ToString('yyyy-MM-dd')
+  if (-not $script:wx) { try { if (Test-Path $CoolFile) { $c = Get-Content $CoolFile -Raw -Encoding UTF8 | ConvertFrom-Json; if ($c.wx -and $c.wx.date -eq $d) { $script:wx = $c.wx } } } catch { } }
+  $stale = (-not $script:wx) -or $script:wx.date -ne $d -or ($t - [datetime]$script:wx.fetched).TotalMinutes -ge 180
+  if ($stale -and ($t - $script:wxTry).TotalMinutes -ge 20) {
+    $script:wxTry = $t
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    foreach ($mdl in @('ecmwf_ifs025', '')) {
+      try {
+        $u = $COOL_URL + $(if ($mdl) { "&models=$mdl" } else { '' })
+        $w = Invoke-RestMethod -Uri $u -TimeoutSec 15
+        $hr = @(); for ($i = 0; $i -lt $w.hourly.time.Count; $i++) { $v = $w.hourly.temperature_2m[$i]; if ($null -ne $v) { $hr += [pscustomobject]@{ h = ([datetime]$w.hourly.time[$i]).Hour; t = [double]$v } } }
+        if (-not $hr.Count) { continue }
+        $rain = 0.0; foreach ($x in $w.hourly.precipitation) { if ($null -ne $x) { $rain += [double]$x } }
+        $script:wx = [pscustomobject]@{ date = $d; model = $(if ($mdl) { 'ECMWF' } else { 'best_match' }); fetched = $t.ToString('yyyy-MM-dd HH:mm:ss'); rain = [math]::Round($rain, 1); hourly = $hr }
+        break
+      } catch { }
+    }
+  }
+  if ($script:wx -and $script:wx.date -eq $d) { return $script:wx }
+  return $null
+}
+function Cool-Eval($t, $fcu) {   # 每一輪 Step 開頭呼叫一次
+  $why = @(); $lvl = 0
+  if (Test-Path (Join-Path $Out 'cool_off.txt')) { $script:coolLvl = 0; $script:cool = [ordered]@{ cool = $false; level = 0; why = '手動關閉 cool_off.txt' }; return }
+  if (Test-Path (Join-Path $Out 'cool_on.txt'))  { $script:coolLvl = 1; $script:cool = [ordered]@{ cool = $true; level = 1; why = '手動開啟 cool_on.txt' }; return }
+  $wx = $null; try { $wx = Get-Wx $t } catch { }
+  $fmax = $null; $rain = $null
+  if ($wx) {
+    $end = $(if ($t.Hour -lt 16) { 16 } else { 23 })
+    $rest = @($wx.hourly | Where-Object { $_.h -ge $t.Hour -and $_.h -le $end } | ForEach-Object { $_.t })
+    if ($rest.Count) { $fmax = ($rest | Measure-Object -Maximum).Maximum }
+    $rain = [double]$wx.rain
+  }
+  $oat = $(if ($fcu) { $fcu.oat }); $dew = $(if ($fcu) { $fcu.dew })
+  $hx = $null; $h4 = 0.0
+  if ($fcu -and $fcu.floors) { foreach ($k in $fcu.floors.Keys) { $f = $fcu.floors[$k]; if ($f.n -lt 5) { continue }; if ($k -eq '4F') { $h4 = $f.hot } elseif ($null -eq $hx -or $f.hot -gt $hx) { $hx = $f.hot } } }
+  # 離開條件
+  $exit = @()
+  if ($null -ne $fmax -and $fmax -gt $COOL_EXIT_T) { $exit += "預報最高 $(R1 $fmax)°C" }
+  if ($null -ne $oat -and $oat -gt $COOL_EXIT_T) { $exit += "外氣 $(R1 $oat)°C" }
+  if ($null -ne $dew -and $dew -gt $COOL_DEW_OUT) { $exit += "露點 $(R1 $dew)°C" }
+  if ($null -ne $hx -and ($hx -ge $ECO_HOT_UP -or $h4 -ge $ECO_4F_UP)) { $exit += "熱房間 $([math]::Round([math]::Max($hx,0)*100))%/4F $([math]::Round($h4*100))%" }
+  # 進入條件
+  $fcOk = $(if ($null -ne $fmax) { ($fmax -le $COOL_TMAX) -or ($rain -ge $COOL_RAIN_MM -and $fmax -le $COOL_RAIN_TMAX) } else { $null })
+  $oaOk = $(if ($null -ne $oat) { $oat -le $(if ($null -eq $fcOk) { 23.0 } else { $COOL_TMAX }) } else { $null })
+  $enter = ($fcOk -ne $false) -and ($oaOk -ne $false) -and ($null -ne $fcOk -or $null -ne $oaOk) -and
+           ($null -eq $dew -or $dew -le $COOL_DEW_IN) -and ($null -eq $hx -or ($hx -lt $ECO_HOT_DN -and $h4 -lt $ECO_4F_OK))
+  $cold = ($null -ne $fmax -and $fmax -le $COOL_COLD_T) -and ($null -eq $oat -or $oat -le $COOL_COLD_T)
+  $held = ($t - $script:coolSince).TotalMinutes -lt $COOL_HOLD_MIN
+  $prev = $script:coolLvl
+  if ($prev -gt 0) {
+    if ($exit.Count -and -not $held) { $lvl = 0 } else { $lvl = $(if ($cold -and $enter) { 2 } elseif ($prev -eq 2 -and -not $cold -and -not $held) { 1 } else { $prev }) }
+  } elseif ($enter -and -not $exit.Count -and -not $held) { $lvl = $(if ($cold) { 2 } else { 1 }) }
+  if ($lvl -ne $prev) { $script:coolSince = $t; $script:coolLvl = $lvl }
+  $src = "預報($(if($wx){$wx.model}else{'無'})) 剩餘最高 $(R1 $fmax)°C 雨 $(R1 $rain)mm；外氣 $(R1 $oat)°C 露點 $(R1 $dew)°C；熱房間 $(if($null -ne $hx){[math]::Round($hx*100)}else{'-'})% 4F $([math]::Round($h4*100))%"
+  $script:cool = [ordered]@{ cool = ($lvl -gt 0); level = $lvl; since = $script:coolSince.ToString('HH:mm'); exit = ($exit -join '、'); why = $src }
+  try { ([ordered]@{ date = $t.ToString('yyyy-MM-dd'); state = $script:cool; wx = $script:wx } | ConvertTo-Json -Compress -Depth 5) | Out-File $CoolFile -Encoding utf8 } catch { }
+}
+function Cool-Day($t) { return ($script:coolLvl -gt 0) }
 function Eco-Floor($t) {
   $h = $t.ToString('HH:mm')
   $o = Day-Override $t
   if ($o -and $h -ge $o[0] -and $h -lt $o[1]) { return $o[2] }
+  $f = Eco-Floor-Base $t $h
+  if ($h -lt '16:00' -and (Cool-Day $t)) { return [math]::Max(30, $f - $(if ($script:coolLvl -ge 2) { $COOL_DROP2 } else { $COOL_DROP })) }   # 涼爽日
+  return $f
+}
+function Eco-Floor-Base($t, $h) {
   $v2 = $t -ge $ECO_V2_FROM            # 11/9 起早上與中午再降（Cliff 2026-11-06 15:54 同意）
   if ($h -lt '09:30') { if ($v2) { return 75 } else { return 90 } }    # 早上剛上班最悶
   if ($h -lt '11:00') { return 65 }
@@ -277,6 +359,7 @@ function Eco-Floor($t) {
   return 30                            # 17:00–18:00；18:00 後另有固定 30%
 }
 function Sp-Band($t) {   # 出水設定季節上下限
+  if ((Cool-Day $t) -and -not (Is-Summer $t)) { if ($script:coolLvl -ge 2) { return @(13.5, 14.0) } else { return @(13.0, 14.0) } }   # 涼爽日：早上也 13–14°C（非夏月，含 12 月後）
   if (Is-Eco $t) { if ($t.ToString('HH:mm') -lt '09:30') { return @(12.0, 13.0) } else { return @(13.0, 14.0) } }   # 早上出水冷一點除濕；白天上限 14（15:13 Cliff）
   $md = $t.Month * 100 + $t.Day
   if ($md -ge 516 -and $md -le 1015) { return @(10.5, 11.5) }
@@ -345,7 +428,7 @@ function Save($now, $d, $m, $cur, $tgt, $action, $note) {
     sp_read = $(if ($m) { $m.sp1 }); sp = $spE; floors = $(if ($fcu) { $fcu.floors }); dewpoint = $(if ($fcu) { R1 $fcu.dew }); oa_n = $(if ($fcu) { $fcu.oa_n }); fan_check = $(if ($fcu) { $fcu.fan })
     chws_c = $(if ($m) { R1 $m.chws }); chws_target = $tgt; fcu_on = $(if ($fcu) { $fcu.on })
     hot_share = $(if ($fcu -and $null -ne $fcu.hot) { [math]::Round($fcu.hot, 2) }); ratio = $r
-    manual_hold = ($now -lt $manualUntil); event = $evtText; event_hot = $evtHot; note = $note; last_action = $lastAction; last_action_at = $lastActionAt
+    manual_hold = ($now -lt $manualUntil); cool_day = $(if ($script:cool) { $script:cool }); event = $evtText; event_hot = $evtHot; note = $note; last_action = $lastAction; last_action_at = $lastActionAt
   }
   ($st | ConvertTo-Json -Compress -Depth 5) | Out-File (Join-Path $Out 'mag_auto_status.json') -Encoding utf8
   if ($action) { Write-Host $row }
@@ -357,6 +440,7 @@ function Step {
   $d = Read-Demand
   if (-not $m -or $null -eq $m.limit) { Save $now $d $m '' '' '' 'no-intouch'; return }
   if (($now - $fcuAt).TotalSeconds -ge 300) { try { $script:fcu = Read-Fcu } catch { $script:fcu = $null }; $script:fcuAt = $now }
+  try { Cool-Eval $now $fcu } catch { }
   $cur = $(if (-not $Live -and $null -ne $sim) { $sim } else { $m.limit })
   $sp  = $(if (-not $Live -and $null -ne $spSim) { $spSim } else { $m.sp1 })
   $action = ''; $note = ''
