@@ -1,14 +1,14 @@
 {
-  "id": "2026-11-09-u9",
+  "id": "2026-11-09-u10",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-09T07:01:42+08:00",
-  "expires": "2026-11-09T15:01:42+08:00",
-  "note": "送風機巡檢：公共區清潔時段 06:00–07:00 不關（PR #43，Cliff 好執行）",
-  "sha": "3379ac6e06a69b77cdada191e397cbea1cf91464",
+  "approved_at": "2026-11-09T08:32:43+08:00",
+  "expires": "2026-11-09T16:32:43+08:00",
+  "note": "磁浮控制：涼爽日模式 v2（ECMWF＋外氣＋室內持續判斷，PR #44，Cliff 好執行）",
+  "sha": "06a98220eb0b07c5ff1e84fa530b60e98cc08042",
   "files": [
     {
       "pc": "ac",
-      "file": "tools/fcu_guard.ps1"
+      "file": "tools/mag_auto.ps1"
     }
   ]
 }
