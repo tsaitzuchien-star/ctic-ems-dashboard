@@ -1158,8 +1158,8 @@
         }
 
         // 夜間異常：下班後（平日 19:00–07:30、週末全天）仍在用電、可追蹤是否能關的設備與空間
-        const NIGHT_OK = { 'A315': '綠能所 24 小時緊急應變值班' };   // Cliff 2026-11-06 確認可排除
-        const PLANT_NIGHT = [['#EACMP_1', '空調主機房 EACMP-1 盤'], ['#ACMP_2', '空調主機房 ACMP-2 盤'], ['#ACMP_G1', '空調主機房 ACMP-G1 盤'], ['@ESP_2B1_1', '冷卻水泵 CWP-7/8（ESP-2B1-1 盤）']];
+        const NIGHT_OK = { 'A315': '綠能所 24 小時緊急應變值班', 'CWP-7/8': 'B1 總變電站水冷箱型冷氣 24 小時用' };   // Cliff 2026-11-06、11-09 確認可排除
+        const PLANT_NIGHT = [['#EACMP_1', '空調主機房 EACMP-1 盤'], ['#ACMP_2', '空調主機房 ACMP-2 盤'], ['#ACMP_G1', '空調主機房 ACMP-G1 盤']];
         function afterHours(now = new Date()) {
             const m = now.getHours() * 60 + now.getMinutes(), wd = now.getDay();
             return wd === 0 || wd === 6 || m < 450 || m >= 1140;
