@@ -1,19 +1,16 @@
 {
-  "id": "2026-11-09-b239-26",
+  "id": "2026-11-09-c303-25",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-09T09:06:59+08:00",
-  "expires": "2026-11-09T11:07:12+08:00",
-  "note": "B239 太冷，兩台設定調到 26°C（Cliff 執行 09:06）",
+  "approved_at": "2026-11-09T11:36:01+08:00",
+  "expires": "2026-11-09T14:44:47+08:00",
+  "note": "C303（環電）14 台送風機設定 27→25°C（Cliff 好執行 11:36）",
   "changes": [
     {
       "kind": "fcu",
-      "room": "B239",
-      "units": [
-        "FCU01",
-        "FCU02"
-      ],
+      "room": "C303",
+      "units": "all",
       "action": "setT",
-      "value": 26
+      "value": 25
     }
   ]
 }
