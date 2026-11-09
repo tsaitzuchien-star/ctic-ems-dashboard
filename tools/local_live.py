@@ -18,6 +18,7 @@ r"""中創園區 本機即時能源網站（在監控電腦執行，只給監控
 import datetime as dt
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -512,25 +513,61 @@ EMS = {"live": None, "rooms": None}         # 本機算的 live.json、rooms.jso
 CIRC = {"obj": None}                        # 全迴路讀值（給 /api/ems/panel 迴路測試頁用）
 
 
+def _incomer_panel(tag):
+    """F2_B2P1_L2C_I1_KWH → "L2C"；不是盤總表（I1）就回 None。"""
+    m = re.match(r"^F\d_(?:G_P1|[A-Z]\dP\d)_(.+?)_I1_KWH$", tag)
+    return m.group(1).upper() if m else None
+
+
 def panel_readings(panel):
-    """迴路測試頁用：某一個盤最近約 20 分鐘、每分鐘的各迴路累積度數。panel 用網站寫法（L4C、R4C_1、EP3D_1_B）。"""
+    """迴路測試頁用：某一個盤最近約 20 分鐘、每分鐘的各迴路累積度數。panel 用網站寫法（L4C、R4C_1、EP3D_1_B）。
+
+    "I" 是盤總表（0.01 度精度，比分路的 0.1 度準很多）；bg 是測試前 2 小時各迴路平常的 kW，
+    用來扣掉「本來就會跳」的背景用電，避免把每 30 分鐘跳一次 0.1 度的迴路誤判成測試負載。
+    """
     c = CIRC["obj"]
     if not c or not c.recent:
         return None
     want = panel.replace("-", "_").upper()
-    rows, panels = [], set()
-    for t, vals in list(c.recent):
+
+    def pick(vals, panels=None):
         row = {}
         for tag, v in vals.items():
+            ip = _incomer_panel(tag)
+            if ip:
+                if ip == want:
+                    row["I"] = v
+                continue
             key = ems_calc.circuit_key(tag)
             if not key or key.startswith("#"):
                 continue
             p, _, n = key.rpartition("_")
-            panels.add(p)
+            if panels is not None:
+                panels.add(p)
             if p.upper() == want:
                 row[n] = v
-        rows.append([t.strftime("%Y-%m-%d %H:%M:%S"), row])
-    return {"panel": want, "rows": rows, "panels": sorted(panels)}
+        return row
+
+    rows, panels = [], set()
+    for t, vals in list(c.recent):
+        rows.append([t.strftime("%Y-%m-%d %H:%M:%S"), pick(vals, panels)])
+    bg = {}
+    try:
+        t_now = c.recent[-1][0]
+        hist = [(t, v) for t, v in c.rows(t_now) if t <= t_now - dt.timedelta(minutes=10)]
+        if hist:
+            t1, v1 = hist[-1]
+            older = [(t, v) for t, v in hist if t <= t1 - dt.timedelta(minutes=90)]
+            if older:
+                t0, v0 = older[-1]
+                hrs = (t1 - t0).total_seconds() / 3600
+                a, b = pick(v0), pick(v1)
+                bg = {k: round((b[k] - a[k]) / hrs, 3) for k in b if k in a and 0 <= b[k] - a[k] < 1000}
+    except Exception as e:                    # 背景用電算不出來不影響測試頁
+        log(f"迴路測試頁背景用電計算失敗：{e}")
+    return {"panel": want, "rows": rows, "panels": sorted(panels), "bg": bg}
+
+
 LOCAL_FLAG = b"<script>window.EMS_LOCAL=true</script>"
 
 
