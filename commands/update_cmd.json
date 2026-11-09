@@ -1,14 +1,18 @@
 {
-  "id": "2026-11-09-u13",
+  "id": "2026-11-09-u14",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-09T11:36:01+08:00",
-  "expires": "2026-11-09T17:36:23+08:00",
-  "note": "指令信箱送風機加入 C303（PR #48，Cliff 好執行）",
-  "sha": "53694fa98467adf8a3fe42001435b3e2a9b1c500",
+  "approved_at": "2026-11-09T17:37:03+08:00",
+  "expires": "2026-11-09T23:37:03+08:00",
+  "note": "迴路測試頁改用盤總表判斷（PR #49，Cliff 好、執行）",
+  "sha": "9a57076d8676d762a833c7f83f4ff4d02b0627c4",
   "files": [
     {
-      "pc": "ac",
-      "file": "tools/sched_cmd.ps1"
+      "pc": "bms",
+      "file": "tools/local_live.py"
+    },
+    {
+      "pc": "bms",
+      "file": "circuit_test.html"
     }
   ]
 }
