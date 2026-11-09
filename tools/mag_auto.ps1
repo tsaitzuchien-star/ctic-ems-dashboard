@@ -376,7 +376,7 @@ $base = $null                # 沒有需量保護時的負載上限（人員設�
 $spSim = $null; $spLastWrite = $null; $lastSpStep = [datetime]::MinValue; $spWant = $null
 $cap = $null                 # 需量保護上限（null = 沒有在限制）
 $lastWrite = $null
-$lastDStep = [datetime]::MinValue; $lastCStep = [datetime]::MinValue; $lastBoost = [datetime]::MinValue; $lastEco = [datetime]::MinValue; $afterSet = $false; $evtOn = $false; $evtText = ''; $evtHot = $null
+$lastDStep = [datetime]::MinValue; $lastCStep = [datetime]::MinValue; $lastBoost = [datetime]::MinValue; $lastTight = [datetime]::MinValue; $lastEco = [datetime]::MinValue; $afterSet = $false; $evtOn = $false; $evtText = ''; $evtHot = $null
 $clearSince = $null; $lostSince = $null; $manualUntil = [datetime]::MinValue
 $fcu = $null; $fcuAt = [datetime]::MinValue
 $lastAction = ''; $lastActionAt = ''
@@ -497,7 +497,10 @@ function Step {
 
   # ---- 1b) 平時上限（沒有在需量降載、沒有人員讓手時才調）----
   if ($null -eq $cap -and $now -ge $manualUntil -and $m.run -gt 0 -and $m.enabled -ge 0.5 -and $note -notmatch 'demand-(derate|release)') {
-    $tight = ($null -eq $ratio -or $ratio -ge $BOOST_OFF)
+    # 遲滯（2026-11-09 08:32 實測：需量在 0.89–0.91 之間時上限 100↔90 每 10 秒來回跳）：
+    # ≥ 90% 退回 90%；之後要 < 85% 且離上次「接近契約」滿 10 分鐘，才可以再升到 90% 以上。已在 100% 時 85–90% 之間維持不動。
+    if ($null -eq $ratio -or $ratio -ge $BOOST_OFF) { $script:lastTight = $now }
+    $tight = ($null -eq $ratio -or $ratio -ge $BOOST_OFF -or ($now - $lastTight).TotalSeconds -lt $BOOST_UP_S -or ($ratio -ge $BOOST_ON -and $base -le $BASE_LO + 0.5))
     $hmNow = $now.ToString('HH:mm')
     $ev = Event-Now $now; $script:evtText = $ev.text; $script:evtHot = $null
     if ($ev.panels.Count) {
