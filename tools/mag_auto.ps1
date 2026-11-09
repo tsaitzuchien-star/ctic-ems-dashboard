@@ -126,6 +126,31 @@ function Read-Mag {
 
 # 小型送風機：有開的台數、比設定熱 1°C 以上的比例、平均 (室溫-設定)
 $fcuTags = $null
+# 溫度線防作弊（Cliff 2026-11-09 10:30「好」：廠商把送風機溫度線拉到平板燈旁或天花板，讓熱房間失準）
+# 1) 冰水回水：主機已到設定（出水 ≤ 設定 + 1.5°C）而回水 − 出水 < 2.0°C → 建築負載低，熱房間再多也不加載、不降出水（11/6 實測：低負載 ΔT ≈ 2.0、滿載 ≈ 3.0）
+# 2) 可疑溫度線：開機中連續熱 90 分鐘，或比同樓層房間中位數高 3°C 以上 → 當天不列入熱房間；每天記一筆到 fcu_suspect_log.csv（週報用）
+# 3) 參考房間（溫度線位置正確）：B301、B239，可在 C:\BMS_Export\ref_rooms.txt 加（一行：面板 房號，例如 SG_3F31_P01 B301）
+#    參考房間有開機時：全部不熱（< 0.5°C）→ 不加載；任一熱（≥ 1°C）→ 視同熱房間多
+$DT_LOW = 2.0; $DT_SP_OK = 1.5; $SUS_HOT_MIN = 90; $SUS_MED_DT = 3.0; $HOT_CAP = 0.24; $H4_CAP = 0.39
+$REF_ROOMS = [ordered]@{ 'SG_3F31_P01' = 'B301'; 'SG_2F31_P25' = 'B239' }
+$RefFile = Join-Path $Out 'ref_rooms.txt'; $SusLog = Join-Path $Out 'fcu_suspect_log.csv'
+$script:hotSince = @{}; $script:suspect = @{}; $script:gateCap = $false; $script:gateWhy = ''
+function Ref-Rooms {
+  $r = [ordered]@{}; foreach ($k in $REF_ROOMS.Keys) { $r[$k] = $REF_ROOMS[$k] }
+  try { if (Test-Path $RefFile) { foreach ($l in (Get-Content $RefFile -Encoding UTF8)) { $x = (($l -split '#')[0].Trim() -split '\s+'); if ($x[0]) { $r[$x[0]] = $(if ($x.Count -gt 1) { $x[1] } else { $x[0] }) } } } } catch { }
+  return $r
+}
+function Hot-Gate($hx, $h4, $m, $fcu) {   # 回傳 @(hx, h4)，並設 $script:gateCap／gateWhy
+  $script:gateCap = $false; $script:gateWhy = ''
+  if ($m -and $m.run -gt 0 -and $m.chws -gt 0 -and $m.chwr -gt 0 -and $m.sp1 -gt 0 -and $m.chws -le $m.sp1 + $DT_SP_OK -and ($m.chwr - $m.chws) -lt $DT_LOW) {
+    $script:gateCap = $true; $script:gateWhy = "回水−出水 $(R1 ($m.chwr - $m.chws))°C < $DT_LOW，建築負載低"
+  } elseif ($fcu -and $fcu.ref_n -gt 0) {
+    if ($fcu.ref_max -lt 0.5) { $script:gateCap = $true; $script:gateWhy = "參考房間（$($fcu.ref_txt)）不熱" }
+    elseif ($fcu.ref_max -ge 1.0) { $script:gateWhy = "參考房間熱（$($fcu.ref_txt)）"; $hx = [math]::Max($(if ($null -ne $hx) { $hx } else { 0 }), $ECO_HOT_UP) }
+  }
+  if ($script:gateCap) { if ($null -ne $hx) { $hx = [math]::Min($hx, $HOT_CAP) }; $h4 = [math]::Min($h4, $H4_CAP) }
+  return @($hx, $h4)
+}
 # 場地租借區（Cliff 2026-11-06 16:21）：挑高又熱，設定下限 20°C；ac_events.txt 有登記的時段照常供冷、下班不關
 $ZONES = [ordered]@{
   '會議廳' = @('SG_1F31_P20')                                                   # C104 國際會議廳（SP-21-3 L3、L4）
@@ -176,7 +201,7 @@ function Read-Fcu {
       $oa[$matches[1]][$matches[2]] = Num $v[$i]
     }
   }
-  $on = 0; $hot = 0; $n = 0; $sum = 0.0; $fl = @{}; $rooms = @{}; $zrooms = @{}
+  $on = 0; $hot = 0; $n = 0; $sum = 0.0; $fl = @{}; $rooms = @{}; $zrooms = @{}; $roomT = @{}
   # 「Run」只代表有通電／連線，不代表有開機（B425 實測 2026-11-06）。真正開機 = 風速 High/Middle/Low 任一為 1。
   $runKeys = @($u.Keys | Where-Object { $u[$_].Run -gt 0.5 })
   $fanState = 'none'; $fanOff = 0; $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -201,11 +226,37 @@ function Read-Fcu {
         $dlt = $f.T - [math]::Max($f.setT, $SET_FLOOR)   # 使用者設太低（例如 13.5°C）以 24°C 計，不算冷氣不足
         # 以「房間」（同一面板 _Pnn）為單位：同房有一台已經涼了，就代表房間不熱（例如太冷只開一台，B443/B425 實測）
         $room = $k -replace '_FCU\d+$', ''
-        if (-not $rooms.ContainsKey($room) -or $dlt -lt $rooms[$room]) { $rooms[$room] = $dlt }
+        if (-not $rooms.ContainsKey($room) -or $dlt -lt $rooms[$room]) { $rooms[$room] = $dlt; $roomT[$room] = $f.T }
         if (In-Zone $k) { $zd = $f.T - [math]::Max($f.setT, $ZONE_SET_MIN); if (-not $zrooms.ContainsKey($room) -or $zd -lt $zrooms[$room]) { $zrooms[$room] = $zd } }
       }
     }
   }
+  # ---- 參考房間、可疑溫度線 ----
+  $refs = Ref-Rooms; $refD = @(); $refT = @()
+  $tn = Get-Date; $today = $tn.ToString('yyyy-MM-dd')
+  $byFl = @{}
+  foreach ($room in $rooms.Keys) { $fk = $(if ($room -match '^SG_(B1|\d)F') { $matches[1] } else { '?' }); if (-not $byFl.ContainsKey($fk)) { $byFl[$fk] = @() }; $byFl[$fk] += $roomT[$room] }
+  $susNow = @{}
+  foreach ($k in @($script:hotSince.Keys)) { if (-not $rooms.ContainsKey($k)) { [void]$script:hotSince.Remove($k) } }   # 沒開機的房間重新計時
+  foreach ($room in @($rooms.Keys)) {
+    $isRef = $false; foreach ($rk in $refs.Keys) { if ($room.StartsWith($rk)) { $isRef = $true; $refD += $rooms[$room]; $refT += "$($refs[$rk]) $(R1 $roomT[$room])°C"; break } }
+    $isHot = ($rooms[$room] -ge 1.0)
+    if ($isHot) { if (-not $script:hotSince.ContainsKey($room)) { $script:hotSince[$room] = $tn } } else { [void]$script:hotSince.Remove($room) }
+    if ($isRef -or -not $isHot) { continue }
+    $fk = $(if ($room -match '^SG_(B1|\d)F') { $matches[1] } else { '?' }); $why = ''
+    if (($tn - $script:hotSince[$room]).TotalMinutes -ge $SUS_HOT_MIN) { $why = "開機連續熱 $SUS_HOT_MIN 分鐘以上" }
+    if ($byFl[$fk].Count -ge 5) { $s2 = @($byFl[$fk] | Sort-Object); $md = $s2[[int][math]::Floor(($s2.Count - 1) / 2)]; if ($roomT[$room] -ge $md + $SUS_MED_DT) { $why = "比同樓層中位數 $(R1 $md)°C 高 $SUS_MED_DT°C 以上" } }
+    if ($why) {
+      $susNow[$room] = $true
+      if (-not $script:suspect.ContainsKey($room) -or $script:suspect[$room] -ne $today) {
+        $script:suspect[$room] = $today
+        try { if (-not (Test-Path $SusLog)) { 'date,time,panel,room_t,set_dlt,reason' | Out-File $SusLog -Encoding utf8 }; "$today,$($tn.ToString('HH:mm')),$room,$(R1 $roomT[$room]),$(R1 $rooms[$room]),$why" | Out-File $SusLog -Append -Encoding utf8 } catch { }
+      }
+    }
+  }
+  $susN = 0
+  foreach ($room in @($rooms.Keys)) { if ($script:suspect.ContainsKey($room) -and $script:suspect[$room] -eq $today) { [void]$rooms.Remove($room); $susN++ } }   # 當天不列入熱房間
+  $refMax = $(if ($refD.Count) { ($refD | Measure-Object -Maximum).Maximum } else { $null })
   foreach ($room in $rooms.Keys) {
     $dlt = $rooms[$room]; $n++; $sum += $dlt
     $floor = $(if ($room -match '^SG_(B1|\d)F') { $(if ($matches[1] -eq 'B1') { 'B1F' } else { $matches[1] + 'F' }) } else { '?' })
@@ -227,7 +278,7 @@ function Read-Fcu {
   $dew = $null; if ($dps.Count) { $s = @($dps | Sort-Object); $dew = $s[[int][math]::Floor(($s.Count - 1) / 2)] }
   $oat = $null; if ($ots.Count) { $s = @($ots | Sort-Object); $oat = $s[[int][math]::Floor(($s.Count - 1) / 2)] }
   [pscustomobject]@{ on = $on; n = $n; hot = $(if ($n) { $hot / $n } else { $null }); dt = $(if ($n) { $sum / $n } else { $null })
-                     floors = $floors; zone = $zrooms; dew = $dew; oat = $oat; oa_n = $dps.Count; fan = "$fanState off=$fanOff of=$($runKeys.Count) $([int]$sw.Elapsed.TotalSeconds)s" }
+                     floors = $floors; zone = $zrooms; dew = $dew; oat = $oat; oa_n = $dps.Count; ref_n = $refD.Count; ref_max = $refMax; ref_txt = ($refT -join '、'); suspect_n = $susN; fan = "$fanState off=$fanOff of=$($runKeys.Count) $([int]$sw.Elapsed.TotalSeconds)s" }
 }
 
 function Read-Demand {
@@ -303,7 +354,7 @@ function Get-Wx($t) {   # ECMWF 預報，每 3 小時更新；失敗 20 分鐘�
   if ($script:wx -and $script:wx.date -eq $d) { return $script:wx }
   return $null
 }
-function Cool-Eval($t, $fcu) {   # 每一輪 Step 開頭呼叫一次
+function Cool-Eval($t, $fcu, $m) {   # 每一輪 Step 開頭呼叫一次
   $why = @(); $lvl = 0
   if (Test-Path (Join-Path $Out 'cool_off.txt')) { $script:coolLvl = 0; $script:cool = [ordered]@{ cool = $false; level = 0; why = '手動關閉 cool_off.txt' }; return }
   if (Test-Path (Join-Path $Out 'cool_on.txt'))  { $script:coolLvl = 1; $script:cool = [ordered]@{ cool = $true; level = 1; why = '手動開啟 cool_on.txt' }; return }
@@ -318,6 +369,7 @@ function Cool-Eval($t, $fcu) {   # 每一輪 Step 開頭呼叫一次
   $oat = $(if ($fcu) { $fcu.oat }); $dew = $(if ($fcu) { $fcu.dew })
   $hx = $null; $h4 = 0.0
   if ($fcu -and $fcu.floors) { foreach ($k in $fcu.floors.Keys) { $f = $fcu.floors[$k]; if ($f.n -lt 5) { continue }; if ($k -eq '4F') { $h4 = $f.hot } elseif ($null -eq $hx -or $f.hot -gt $hx) { $hx = $f.hot } } }
+  $g = Hot-Gate $hx $h4 $m $fcu; $hx = $g[0]; $h4 = $g[1]
   # 離開條件
   $exit = @()
   if ($null -ne $fmax -and $fmax -gt $COOL_EXIT_T) { $exit += "預報最高 $(R1 $fmax)°C" }
@@ -428,7 +480,7 @@ function Save($now, $d, $m, $cur, $tgt, $action, $note) {
     sp_read = $(if ($m) { $m.sp1 }); sp = $spE; floors = $(if ($fcu) { $fcu.floors }); dewpoint = $(if ($fcu) { R1 $fcu.dew }); oa_n = $(if ($fcu) { $fcu.oa_n }); fan_check = $(if ($fcu) { $fcu.fan })
     chws_c = $(if ($m) { R1 $m.chws }); chws_target = $tgt; fcu_on = $(if ($fcu) { $fcu.on })
     hot_share = $(if ($fcu -and $null -ne $fcu.hot) { [math]::Round($fcu.hot, 2) }); ratio = $r
-    manual_hold = ($now -lt $manualUntil); cool_day = $(if ($script:cool) { $script:cool }); event = $evtText; event_hot = $evtHot; note = $note; last_action = $lastAction; last_action_at = $lastActionAt
+    manual_hold = ($now -lt $manualUntil); cool_day = $(if ($script:cool) { $script:cool }); event = $evtText; event_hot = $evtHot; hot_gate = $gateWhy; ref_rooms = $(if ($fcu) { $fcu.ref_txt }); suspect_n = $(if ($fcu) { $fcu.suspect_n }); note = $note; last_action = $lastAction; last_action_at = $lastActionAt
   }
   ($st | ConvertTo-Json -Compress -Depth 5) | Out-File (Join-Path $Out 'mag_auto_status.json') -Encoding utf8
   if ($action) { Write-Host $row }
@@ -440,7 +492,7 @@ function Step {
   $d = Read-Demand
   if (-not $m -or $null -eq $m.limit) { Save $now $d $m '' '' '' 'no-intouch'; return }
   if (($now - $fcuAt).TotalSeconds -ge 300) { try { $script:fcu = Read-Fcu } catch { $script:fcu = $null }; $script:fcuAt = $now }
-  try { Cool-Eval $now $fcu } catch { }
+  try { Cool-Eval $now $fcu $m } catch { }
   $cur = $(if (-not $Live -and $null -ne $sim) { $sim } else { $m.limit })
   $sp  = $(if (-not $Live -and $null -ne $spSim) { $spSim } else { $m.sp1 })
   $action = ''; $note = ''
@@ -493,6 +545,7 @@ function Step {
       if ($k -eq '4F') { $h4f = $f.hot } elseif ($null -eq $hmX -or $f.hot -gt $hmX) { $hmX = $f.hot; $hmXFloor = $k }
     }
   }
+  $g = Hot-Gate $hmX $h4f $m $fcu; $hmX = $g[0]; $h4f = $g[1]
   $eco = Is-Eco $now
 
   # ---- 1b) 平時上限（沒有在需量降載、沒有人員讓手時才調）----
@@ -575,6 +628,7 @@ function Step {
         if ($f.hot -ge $HOT_OK) { $allOk = $false }
       }
       $h4 = $(if ($fcu.floors.Contains('4F')) { $fcu.floors['4F'].hot } else { 0 })
+      if ($gateCap) { $hm = [math]::Min($hm, $HOT_CAP); $h4 = [math]::Min($h4, $H4_CAP) } elseif ($gateWhy -match '參考房間熱') { $hm = [math]::Max($hm, $HOT_UP) }
       $demandTight = ($null -ne $ratio -and $ratio -ge 0.90) -or ($null -ne $cap)
       $pulldown = ($now.ToString('HH:mm') -lt $PULLDOWN_END)
       if ($eco) {
