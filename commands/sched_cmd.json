@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-10-b330-a19-off",
+  "id": "2026-11-10-b330-a19-on",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-10T13:33:42+08:00",
-  "expires": "2026-11-10T15:33:42+08:00",
-  "note": "B330 照明測試第一步：A區19（EL3C_19）關燈，Cliff 在現場看是哪一排；B331 主管辦公室不可動（不碰 EL3C1_17）",
+  "approved_at": "2026-11-10T13:36:20+08:00",
+  "expires": "2026-11-10T15:36:20+08:00",
+  "note": "B330 照明測試：A區19（EL3C_19）恢復開燈（Cliff 回「開燈」）",
   "dry_run": false,
   "changes": [
-    { "kind": "light", "room": "B330", "circuits": ["EL3C_19"], "action": "off" }
+    { "kind": "light", "room": "B330", "circuits": ["EL3C_19"], "action": "on" }
   ]
 }
