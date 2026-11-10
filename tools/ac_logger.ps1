@@ -197,6 +197,7 @@ function Read-Once {
         }
         $j['plant'] = $pl
         $j['oat_c'] = $pl["$($d)CHU1_OAH"]; $j['oat_sp_c'] = $pl["$($d)CHU1_OAH_SP"]   # 外氣溫度／開機門檻
+        $j['oat_locked'] = $(if ($null -ne $j['oat_c'] -and $null -ne $j['oat_sp_c']) { [int]($j['oat_c'] -lt $j['oat_sp_c']) } else { $null })   # 1 = 外氣低於門檻，冰機依規則不開機
         $pf = Join-Path $Out ('PLANT_' + $now.ToString('yyyy-MM-dd') + '.csv')
         $ph = (@('time') + $plantTags) -join ','
         if ((Test-Path $pf) -and ((Get-Content $pf -TotalCount 1) -ne $ph)) { Move-Item $pf ($pf -replace '\.csv$', ('_' + $now.ToString('HHmm') + '.csv')) -Force }
