@@ -94,6 +94,8 @@ foreach ($t in 'BCU_TR11','CHP5_VFD_FB','CHP6_VFD_FB','CT1_VFD_FB','CT2_VFD_FB',
                'Sys_DP_01','Sys_DP_02','SCHP_123_Valve01_FB','SCHP_45_Valve01_FB','Hex01_Valve01_FB','Hex02_Valve01_FB','ET2_Limit',
                'Hex01_T01','Hex01_T02','Hex01_T03','Hex01_T04','Hex02_T01','Hex02_T02','Hex02_T03','Hex02_T04') { $plantTags.Add("$d$t") }
 foreach ($n in 1..19) { if ($n -ne 16) { $plantTags.Add(('{0}Sys_T{1:00}' -f $d, $n)) } }
+# 外氣鎖定（2026-11-10）：現場 PLC 規則「外氣溫度低於設定值，冰機不開機」。畫面「冰水主機系統」左上角，只讀。
+$plantTags.Add("$($d)CHU1_OAH"); $plantTags.Add("$($d)CHU1_OAH_SP")
 foreach ($u in 'AHU_111','AHU_112','AHU_121','AHU_122','AHU_1B1','AHU_1B2','AHU_G11','AHU_G21','AHU_G31','AHU_GB1','AHU_GB2',
                'PAH_111','PAH_112','PAH_121','PAH_122','PAH_131','PAH_132','PAH_211','PAH_212','PAH_213','PAH_221','PAH_222','PAH_231','PAH_232','PAH_241','PAH_242') {
   $plantTags.Add("$($u)_Fan_ST"); $plantTags.Add("$($u)_RA_T"); $plantTags.Add("$($u)_CV01_FB")
@@ -194,6 +196,7 @@ function Read-Once {
           if ([double]::TryParse($pv[$i], [Globalization.NumberStyles]::Float, $inv, [ref]$x)) { $x = [math]::Round($x,2); $pl[$plantTags[$i]] = $x; $row += $x.ToString($inv) } else { $row += '' }
         }
         $j['plant'] = $pl
+        $j['oat_c'] = $pl["$($d)CHU1_OAH"]; $j['oat_sp_c'] = $pl["$($d)CHU1_OAH_SP"]   # 外氣溫度／開機門檻
         $pf = Join-Path $Out ('PLANT_' + $now.ToString('yyyy-MM-dd') + '.csv')
         $ph = (@('time') + $plantTags) -join ','
         if ((Test-Path $pf) -and ((Get-Content $pf -TotalCount 1) -ne $ph)) { Move-Item $pf ($pf -replace '\.csv$', ('_' + $now.ToString('HHmm') + '.csv')) -Force }
