@@ -17,10 +17,6 @@
     {
       "pc": "bms",
       "file": "index.html"
-    },
-    {
-      "pc": "bms",
-      "file": "data/savings_baseline.json"
     }
   ]
 }
