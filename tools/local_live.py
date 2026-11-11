@@ -423,7 +423,10 @@ class Circuits:
         data["fcu"] = fcu
         try:                                   # 節電成效、-2.1% 目標、控制程式狀態（2026-11-06）
             today_raw = [(t, kw) for t, kw in ems_calc.intervals(rows) if t.date() == now.date()]
-            data["savings"] = ems_calc.savings(today_raw, now, load_site_json("savings_baseline.json"))
+            sbase = load_site_json("savings_baseline.json")
+            data["savings"] = ems_calc.savings(today_raw, now, sbase)
+            if data["savings"]:
+                data["savings"]["weather"] = ems_calc.savings_weather(fcu, sbase)
             tcfg = load_site_json("target.json")
             data["target"] = ems_calc.target_status(self.month_daily(now, (tcfg or {}).get("known_days")), now, tcfg)
             data["mag_ctl"] = read_mag()

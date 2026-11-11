@@ -559,6 +559,21 @@ def savings(today_raw, now, base, holiday=False):
     return out
 
 
+def savings_weather(fcu, base):
+    """今天 08:00 起現場外氣平均 vs 基準日（base["weather"]）：差幾度、是否超出基準日的範圍（超出 → 節電量僅供參考）。"""
+    w = (base or {}).get("weather")
+    ser = (fcu or {}).get("series") or {}
+    if not w:
+        return None
+    vals = [v for t, v in zip(ser.get("times", []), ser.get("oat_c", [])) if v is not None and "08:00" <= t <= "18:45"]
+    if len(vals) < 4:                          # 至少 1 小時資料才判斷
+        return None
+    oat = sum(vals) / len(vals)
+    return {"oat_c": round(oat, 1), "base_c": w["oat_mean_c"], "diff_c": round(oat - w["oat_mean_c"], 1),
+            "outside": oat < w["oat_min_c"] or oat > w["oat_max_c"],
+            "base_min_c": w["oat_min_c"], "base_max_c": w["oat_max_c"]}
+
+
 def target_status(daily, now, cfg):
     """帳單月節電目標（target_pct）：daily = {"YYYY-MM-DD": 總表 kWh}（本月，今天可為部分），cfg = data/target.json。"""
     if not cfg or not daily:
