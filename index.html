@@ -936,7 +936,11 @@
             if (!s) { rtSet('rt-sav', '<span class="text-slate-400">沒有基準資料（data/savings_baseline.json）</span>'); rtSet('rt-sav-note', ''); }
             else {
                 rtSet('rt-sav', savRow('磁浮主機 EACMP-1', s.mag) + savRow('園區總表', s.main));
-                rtSet('rt-sav-note', `比較基準：自動控制前手動操作的 ${s.base_days} 個${s.day_type === 'weekday' ? '平日' : '假日'}（10/16–11/05）同時段平均。未做天氣修正，天熱或活動多會偏高。`);
+                const w = s.weather;
+                const wx = !w ? '' : w.outside
+                    ? `<span class="block mt-1 text-amber-300">⚠️ 今天外氣平均 ${fmt(w.oat_c, 1)}°C，比基準日（${fmt(w.base_min_c, 1)}–${fmt(w.base_max_c, 1)}°C）${w.diff_c < 0 ? '涼' : '熱'} ${fmt(Math.abs(w.diff_c), 1)}°C，天氣差異大，節電量僅供參考。</span>`
+                    : `<span class="block mt-1">今天外氣平均 ${fmt(w.oat_c, 1)}°C，在基準日範圍內（平均 ${fmt(w.base_c, 1)}°C），比較較可信。</span>`;
+                rtSet('rt-sav-note', `比較基準：自動控制前手動操作的 ${s.base_days} 個${s.day_type === 'weekday' ? '平日' : '假日'}（10/16–11/05）同時段平均。未做天氣修正，天涼時省電會被高估、天熱時會被低估。${wx}`);
             }
             if (!t) { rtSet('rt-tgt', '<span class="text-slate-400">沒有目標設定（data/target.json）</span>'); rtSet('rt-tgt-note', ''); }
             else {
