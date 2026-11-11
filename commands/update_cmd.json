@@ -1,22 +1,14 @@
 {
-  "id": "2026-11-11-u16",
+  "id": "2026-11-11-u17",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-11T14:12:36+08:00",
-  "expires": "2026-11-11T20:12:36+08:00",
-  "note": "節電卡片顯示今天外氣與基準日差幾度（PR #52，Cliff 好、執行）",
+  "approved_at": "2026-11-11T22:54:58+08:00",
+  "expires": "2026-11-12T04:54:58+08:00",
+  "note": "網站程式沒回應，重新安裝 ems_calc.py 以重啟 CTIC_Local_Live（Cliff 執行）",
   "sha": "42fa93ced5c2a41be0f6a2d04a90d819b38f0849",
   "files": [
     {
       "pc": "bms",
       "file": "tools/ems_calc.py"
-    },
-    {
-      "pc": "bms",
-      "file": "tools/local_live.py"
-    },
-    {
-      "pc": "bms",
-      "file": "index.html"
     }
   ]
 }
