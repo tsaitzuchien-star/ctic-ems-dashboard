@@ -5,6 +5,7 @@
 # 例：先探測（不匯出）           powershell -File hist_export.ps1 -Probe
 #     試匯一天                   powershell -File hist_export.ps1 -Start 2026-11-05 -End 2026-11-05
 #     匯整段                     powershell -File hist_export.ps1 -Start 2024-01-01 -End 2026-11-05
+#     空調監控主機（2026-11-14）：-HistDir auto 自動找 .lgh 所在資料夾；-MergeTo 指定合併檔放哪（不找 Google 雲端）
 param(
   [string]$Start = '', [string]$End = '',
   [string[]]$Tags = @('F0_B1P2_EACMP_1_CHU2_KW', 'F0_B1P2_EACMP_1_CHU2_KWH', 'F0_B1P2_EACMP_1_KWH'),
@@ -13,12 +14,14 @@ param(
   [string]$Duration = '24h',          # 每個檔涵蓋的長度
   [string]$DateFmt = '',              # 空白 = 用 Windows 的簡短日期格式
   [string]$Out = 'C:\BMS_Export\hist',
-  [string]$HistDir = 'D:\History',   # 歷史檔資料夾（HistData 的 DataDir）
+  [string]$HistDir = 'D:\History',   # 歷史檔資料夾（HistData 的 DataDir）；auto = 自動找 .lgh 最多的資料夾
   [string]$DbDir = '',                # InTouch 應用程式資料夾（有 tagname.x 的地方；HistData 的 DBDir）；空白＝自動找
   [int]$TimeoutS = 300,
   [switch]$Probe,
   [switch]$Diag,
-  [switch]$Merge                      # 把每天的檔合併成一個含時間欄的 CSV，放到 Google 雲端 BMS自動匯出
+  [switch]$Merge,                     # 把每天的檔合併成一個含時間欄的 CSV，放到 Google 雲端 BMS自動匯出
+  [string]$MergeTo = '',              # 合併檔改放這個資料夾（空白＝找 Google 雲端）
+  [switch]$ThenMerge                  # 匯完接著合併（給 sched_cmd 用，要配 -MergeTo）
 )
 $ErrorActionPreference = 'Stop'
 
@@ -64,8 +67,8 @@ Add-Type -TypeDefinition $src
 
 function Ensure-HistData {
   if (Get-Process -Name histdata -ErrorAction SilentlyContinue) { return }
-  $exe = 'C:\Program Files (x86)\Wonderware\InTouch\histdata.exe'
-  if (-not (Test-Path $exe)) { throw "找不到 $exe" }
+  $exe = @('C:\Program Files (x86)\Wonderware\InTouch\histdata.exe', 'C:\Program Files\Wonderware\InTouch\histdata.exe') | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if (-not $exe) { throw '找不到 histdata.exe（Wonderware\InTouch）' }
   Start-Process $exe -WindowStyle Minimized
   Start-Sleep -Seconds 5
 }
@@ -81,15 +84,28 @@ function Find-DbDir {
   return $hits[0].DirectoryName
 }
 
+function Find-HistDir {
+  $cache = Join-Path (Split-Path $Out) 'hist_histdir.txt'
+  if (Test-Path $cache) { $c = (Get-Content $cache -TotalCount 1).Trim(); if ($c -and (Get-ChildItem $c -Filter *.lgh -ErrorAction SilentlyContinue | Select-Object -First 1)) { return $c } }
+  Write-Host '尋找 InTouch 歷史檔資料夾（*.lgh），第一次要幾分鐘…'
+  $roots = @(Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Used -gt 0 -and $_.Root -match '^[A-Z]:\\$' } | ForEach-Object { $_.Root })
+  $g = @(Get-ChildItem $roots -Recurse -Filter *.lgh -ErrorAction SilentlyContinue | Group-Object DirectoryName | Sort-Object Count -Descending)
+  foreach ($x in $g) { $f = @($x.Group | Sort-Object Name); Write-Host ("  {0}  {1} 個  {2} ~ {3}" -f $x.Name, $x.Count, $f[0].Name, $f[-1].Name) }
+  if (-not $g.Count) { throw '找不到任何 .lgh 歷史檔' }
+  $g[0].Name | Out-File $cache -Encoding utf8
+  return $g[0].Name
+}
+
 if ($Merge) {
   $drive = $null
-  foreach ($r in (Get-PSDrive -PSProvider FileSystem | % Root)) {
+  if ($MergeTo) { if (-not (Test-Path $MergeTo)) { throw "沒有 $MergeTo" }; $drive = $MergeTo }
+  if (-not $drive) { foreach ($r in (Get-PSDrive -PSProvider FileSystem | % Root)) {
     foreach ($sub in '我的雲端硬碟', 'My Drive') {
       $base = Join-Path $r $sub
       if (Test-Path $base) { $hit = Get-ChildItem $base -Directory -Filter 'BMS*' | Select-Object -First 1; if ($hit) { $drive = $hit.FullName; break } }
     }
     if ($drive) { break }
-  }
+  } }
   if (-not $drive) { throw '找不到 Google 雲端的 BMS自動匯出 資料夾' }
   $step = [int]($Interval -replace '[^0-9]', ''); if ($Interval -match 'h$') { $step *= 60 }
   $files = @(Get-ChildItem $Out -Filter "$($Prefix)_*.csv" | Sort-Object Name)
@@ -137,7 +153,8 @@ try {
   if (-not $DateFmt) { $DateFmt = [Globalization.CultureInfo]::CurrentCulture.DateTimeFormat.ShortDatePattern }
   New-Item -ItemType Directory -Force -Path $Out | Out-Null
   if (-not $DbDir) { $DbDir = Find-DbDir }
-  "InTouch 應用程式資料夾：$DbDir"
+  if ($HistDir -eq 'auto') { $HistDir = Find-HistDir }
+  "InTouch 應用程式資料夾：$DbDir；歷史檔資料夾：$HistDir"
   $d = [datetime]::ParseExact($Start, 'yyyy-MM-dd', $null); $e = [datetime]::ParseExact($End, 'yyyy-MM-dd', $null)
   $okN = 0; $failN = 0
   while ($d -le $e) {
@@ -177,3 +194,4 @@ try {
   }
   "完成：成功 $okN 天，失敗 $failN 天，檔案在 $Out"
 } finally { [CticHist]::Close() }
+if ($ThenMerge) { & $PSCommandPath -Merge -Prefix $Prefix -Interval $Interval -Out $Out -MergeTo $MergeTo }
