@@ -1,14 +1,13 @@
 {
-  "id": "2026-11-11-u17",
+  "id": "2026-11-13-u18",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-11T22:54:58+08:00",
-  "expires": "2026-11-12T04:54:58+08:00",
-  "note": "網站程式沒回應，重新安裝 ems_calc.py 以重啟 CTIC_Local_Live（Cliff 執行）",
-  "sha": "42fa93ced5c2a41be0f6a2d04a90d819b38f0849",
+  "approved_at": "2026-11-13T17:15:15+08:00",
+  "expires": "2026-11-13T23:15:15+08:00",
+  "note": "PR #51：外氣溫度與開機門檻（固定 21.5°C）、磁浮開機看門狗（Cliff 執行）",
+  "sha": "7439b163c14ad9edce7b3a2a315b415ce0aaaf3b",
   "files": [
-    {
-      "pc": "bms",
-      "file": "tools/ems_calc.py"
-    }
+    { "pc": "ac", "file": "tools/ac_logger.ps1" },
+    { "pc": "ac", "file": "tools/mag_auto.ps1" },
+    { "pc": "bms", "file": "tools/line_push.py" }
   ]
 }
