@@ -354,6 +354,16 @@ function Get-Wx($t) {   # ECMWF 預報，每 3 小時更新；失敗 20 分鐘�
   if ($script:wx -and $script:wx.date -eq $d) { return $script:wx }
   return $null
 }
+# 現場外氣鎖定（2026-11-10）：PLC 規則「外氣 SGB1DC51_CHU1_OAH 低於設定值 CHU1_OAH_SP（目前 22°C）冰機不開機」。
+# 從 ac_logger 的 ac_latest.json 讀（5 分鐘內的才用）。涼爽日「很涼」門檻改用這個設定值，外氣感測器讀不到時也拿它補。
+function Plant-Oa {
+  try {
+    $a = Get-Content (Join-Path $Out 'ac_latest.json') -Raw | ConvertFrom-Json
+    if (((Get-Date) - [datetime]::ParseExact($a.time, 'yyyy-MM-dd HH:mm:ss', $null)).TotalMinutes -gt 5) { return $null }
+    $o = $a.oat_c; $sp = $a.oat_sp_c
+    return [pscustomobject]@{ oat = $(if ($o -gt 0 -and $o -lt 45) { [double]$o } else { $null }); sp = $(if ($sp -gt 10 -and $sp -lt 35) { [double]$sp } else { $null }) }
+  } catch { return $null }
+}
 function Cool-Eval($t, $fcu, $m) {   # 每一輪 Step 開頭呼叫一次
   $why = @(); $lvl = 0
   if (Test-Path (Join-Path $Out 'cool_off.txt')) { $script:coolLvl = 0; $script:cool = [ordered]@{ cool = $false; level = 0; why = '手動關閉 cool_off.txt' }; return }
@@ -367,6 +377,8 @@ function Cool-Eval($t, $fcu, $m) {   # 每一輪 Step 開頭呼叫一次
     $rain = [double]$wx.rain
   }
   $oat = $(if ($fcu) { $fcu.oat }); $dew = $(if ($fcu) { $fcu.dew })
+  $po = Plant-Oa; if ($null -eq $oat -and $po) { $oat = $po.oat }
+  $coldT = $(if ($po -and $null -ne $po.sp) { $po.sp } else { $COOL_COLD_T })
   $hx = $null; $h4 = 0.0
   if ($fcu -and $fcu.floors) { foreach ($k in $fcu.floors.Keys) { $f = $fcu.floors[$k]; if ($f.n -lt 5) { continue }; if ($k -eq '4F') { $h4 = $f.hot } elseif ($null -eq $hx -or $f.hot -gt $hx) { $hx = $f.hot } } }
   $g = Hot-Gate $hx $h4 $m $fcu; $hx = $g[0]; $h4 = $g[1]
@@ -381,14 +393,14 @@ function Cool-Eval($t, $fcu, $m) {   # 每一輪 Step 開頭呼叫一次
   $oaOk = $(if ($null -ne $oat) { $oat -le $(if ($null -eq $fcOk) { 23.0 } else { $COOL_TMAX }) } else { $null })
   $enter = ($fcOk -ne $false) -and ($oaOk -ne $false) -and ($null -ne $fcOk -or $null -ne $oaOk) -and
            ($null -eq $dew -or $dew -le $COOL_DEW_IN) -and ($null -eq $hx -or ($hx -lt $ECO_HOT_DN -and $h4 -lt $ECO_4F_OK))
-  $cold = ($null -ne $fmax -and $fmax -le $COOL_COLD_T) -and ($null -eq $oat -or $oat -le $COOL_COLD_T)
+  $cold = ($null -ne $fmax -and $fmax -le $coldT) -and ($null -eq $oat -or $oat -le $coldT)
   $held = ($t - $script:coolSince).TotalMinutes -lt $COOL_HOLD_MIN
   $prev = $script:coolLvl
   if ($prev -gt 0) {
     if ($exit.Count -and -not $held) { $lvl = 0 } else { $lvl = $(if ($cold -and $enter) { 2 } elseif ($prev -eq 2 -and -not $cold -and -not $held) { 1 } else { $prev }) }
   } elseif ($enter -and -not $exit.Count -and -not $held) { $lvl = $(if ($cold) { 2 } else { 1 }) }
   if ($lvl -ne $prev) { $script:coolSince = $t; $script:coolLvl = $lvl }
-  $src = "預報($(if($wx){$wx.model}else{'無'})) 剩餘最高 $(R1 $fmax)°C 雨 $(R1 $rain)mm；外氣 $(R1 $oat)°C 露點 $(R1 $dew)°C；熱房間 $(if($null -ne $hx){[math]::Round($hx*100)}else{'-'})% 4F $([math]::Round($h4*100))%"
+  $src = "預報($(if($wx){$wx.model}else{'無'})) 剩餘最高 $(R1 $fmax)°C 雨 $(R1 $rain)mm；外氣 $(R1 $oat)°C 露點 $(R1 $dew)°C；開機門檻 $(R1 $coldT)°C；熱房間 $(if($null -ne $hx){[math]::Round($hx*100)}else{'-'})% 4F $([math]::Round($h4*100))%"
   $script:cool = [ordered]@{ cool = ($lvl -gt 0); level = $lvl; since = $script:coolSince.ToString('HH:mm'); exit = ($exit -join '、'); why = $src }
   try { ([ordered]@{ date = $t.ToString('yyyy-MM-dd'); state = $script:cool; wx = $script:wx } | ConvertTo-Json -Compress -Depth 5) | Out-File $CoolFile -Encoding utf8 } catch { }
 }
@@ -486,8 +498,30 @@ function Save($now, $d, $m, $cur, $tgt, $action, $note) {
   if ($action) { Write-Host $row }
 }
 
+# 外氣開機門檻守門（2026-11-13 Cliff 授權）：PLC 點 SGB1DC51_CHU1_OAH_SP（外氣低於它冰機不開機）固定 21.5°C。
+# 原本 22°C 時廠商反映太悶，同仁改 21.5 後好很多。每分鐘讀一次，高於 21.5 就寫回 21.5（最多每 10 分鐘寫一次）；
+# 低於 21.5 不動（只限制上限）。停用：C:\BMS_Export\oa_sp_guard_off.txt。
+$OA_SP_TAG = 'SGB1DC51_CHU1_OAH_SP'; $OA_SP_MAX = 21.5
+$script:oaSpAt = [datetime]::MinValue; $script:oaSpWriteAt = [datetime]::MinValue
+function Oa-Sp-Guard($now) {
+  if (($now - $script:oaSpAt).TotalSeconds -lt 60) { return }
+  $script:oaSpAt = $now
+  if (Test-Path (Join-Path $Out 'oa_sp_guard_off.txt')) { return }
+  $v = [CticDdeW]::Read([string[]]@($OA_SP_TAG)); $x = 0.0
+  if ($null -eq $v -or -not [double]::TryParse("$($v[0])", [Globalization.NumberStyles]::Float, $inv, [ref]$x)) { return }
+  if ($x -le 10 -or $x -ge 35 -or $x -le $OA_SP_MAX + 0.05) { return }
+  if (($now - $script:oaSpWriteAt).TotalMinutes -lt 10) { return }
+  $script:oaSpWriteAt = $now
+  if ($Live) {
+    $ok = [CticDdeW]::Poke($OA_SP_TAG, $OA_SP_MAX.ToString($inv))
+    $script:lastAction = "外氣開機門檻被改成 $x°C，已調回 $OA_SP_MAX°C（poke=$ok）"; $script:lastActionAt = $now.ToString('yyyy-MM-dd HH:mm:ss')
+  }
+  "$($now.ToString('s')) OA_SP $x -> $OA_SP_MAX live=$Live" | Out-File (Join-Path $Out 'mag_auto.log') -Append -Encoding utf8
+}
+
 function Step {
   $now = Get-Date
+  try { Oa-Sp-Guard $now } catch { }
   $m = Read-Mag
   $d = Read-Demand
   if (-not $m -or $null -eq $m.limit) { Save $now $d $m '' '' '' 'no-intouch'; return }

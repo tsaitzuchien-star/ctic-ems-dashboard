@@ -10,6 +10,7 @@
    夏月平日 16:00–22:00 磁浮還在轉也推播；製冰／融冰／磁浮排程一被修改就推播新舊值與檢查結果；
    每天 21:30 檢查今晚製冰與明天融冰／磁浮排程，有問題才推播。全部只讀，不會去動任何設備。
 6. 排程指令信箱（sched_cmd.ps1）的執行結果：已執行／被擋下／沒完成，每筆推一次。
+7. 磁浮開機看門狗（2026-11-10）：排程開機 10 分鐘後還沒運轉 → 依現場外氣鎖定判斷是正常還是異常。
 為了守住免費方案每月 200 則（則數 × 好友人數），每天最多推 MAX_PER_DAY 則（摘要不受限）。
 
 測試：python line_push.py --test   （先印出方案上限／本月已用／好友數，再送一則測試訊息）
@@ -92,6 +93,8 @@ ICE_REPEAT_MIN, ICE_REPEAT_MAX = 10, 3      # 白天製冰沒停：每 10 分鐘
 SCHED_CHECK_AT = "21:30"       # 每天檢查今晚製冰與明天融冰／磁浮排程（製冰通常 23:55 開始）
 WD = "一二三四五六日"
 SCHED_NAMES = {"ice": "製冰", "melt": "融冰", "chu2": "磁浮"}
+START_LATE_MIN = 10             # 磁浮排程開機時間過了幾分鐘還沒運轉就檢查（2026-11-10）
+START_WARM_MIN = 15             # 鎖定後外氣回升到門檻以上、持續幾分鐘仍沒開才警報
 CMD_RESULT = r"\\10.10.2.4\AC_Export\sched_cmd_result.json"   # 空調監控主機 sched_cmd.ps1（指令信箱）的執行結果
 # 程式更新信箱 update_cmd.ps1 的結果（2026-11-08）：本機（監控電腦）與空調監控主機各一份。state 鍵 → 檔案
 RESULT_FILES = {"cmd_seen": CMD_RESULT,
@@ -400,6 +403,65 @@ class Notifier:
         else:
             st.pop("peak_since", None)
 
+    def _start_guard(self, now, ac):
+        """磁浮開機看門狗（2026-11-10）：排程有勾、開機時間過 10 分鐘還沒運轉 → 看現場外氣鎖定
+        （外氣 SGB1DC51_CHU1_OAH 低於設定值 CHU1_OAH_SP 冰機不開機）。
+        外氣低於門檻 → 只通知一則「依規則不開機」；外氣高於門檻還沒開 → 🚨 警報。
+        鎖定後若外氣回升超過門檻 15 分鐘仍沒開 → 警報；之後自己開了 → 通知一則（藉此知道 PLC 是不是全天判斷）。"""
+        try:
+            age = (now - dt.datetime.strptime(ac.get("time", ""), "%Y-%m-%d %H:%M:%S")).total_seconds()
+        except ValueError:
+            return
+        if not ac.get("viewer_ok") or age > 180:
+            return
+        e = _entry(ac.get("sched"), "chu2", now.weekday())
+        hm = now.strftime("%H:%M")
+        if not e or e.get("en") != 1 or not _hm_ok(e.get("on")) or not _hm_ok(e.get("off")) or not (e["on"] <= hm < e["off"]):
+            return
+        due = (dt.datetime.combine(now.date(), dt.datetime.strptime(e["on"], "%H:%M").time())
+               + dt.timedelta(minutes=START_LATE_MIN))
+        if now < due:
+            return
+        day = now.date().isoformat()
+        st = self.state.setdefault("start", {})
+        if st.get("day") != day:
+            st.clear()
+            st["day"] = day
+        mkw = mag_kw(ac)
+        running = (mkw is not None and mkw >= MAG_ON_KW) or ac.get("chu2_st") == 1
+        oat, sp = ac.get("oat_c"), ac.get("oat_sp_c")
+        oa = f"外氣 {_f(oat, 1)}°C／開機門檻 {_f(sp, 1)}°C"
+        locked = oat is not None and sp is not None and oat < sp
+        if running:
+            if st.get("state") in ("lock", "alarm"):
+                self._push(f"✅ 磁浮已啟動（{hm}，排程 {e['on']}）\n{oa}", force=st["state"] == "alarm")
+            st["state"] = "ok"
+            st.pop("warm_since", None)
+            self._save()
+            return
+        if st.get("state") == "ok":
+            return                                   # 今天已經開過（之後停機另有別的檢查）
+        if st.get("state") is None:
+            if locked:
+                st["state"] = "lock"
+                self._push(f"ℹ️ 磁浮 {e['on']} 排程沒有開機：{oa}\n"
+                           "現場規則「外氣低於門檻冰機不開機」，屬正常。外氣回升後若還沒開會再通知。")
+            else:
+                st["state"] = "alarm"
+                self._push(f"🚨 磁浮排程 {e['on']} 開機，已過 {START_LATE_MIN} 分鐘仍未運轉\n{oa}\n"
+                           "外氣沒有低於門檻，請同仁到【空調監控主機】確認冰機、泵浦狀態並手動開機。", force=True)
+            self._save()
+            return
+        if st.get("state") == "lock" and not locked and oat is not None:
+            since = st.setdefault("warm_since", now.isoformat(timespec="seconds"))
+            if (now - dt.datetime.fromisoformat(since)).total_seconds() >= START_WARM_MIN * 60:
+                st["state"] = "alarm"
+                self._push(f"⚠️ 外氣已回升到門檻以上 {START_WARM_MIN} 分鐘，磁浮仍未開機（{hm}）\n{oa}\n"
+                           "看起來外氣鎖定只在開機時間判斷一次，需要請同仁手動開機。", force=True)
+                self._save()
+        elif locked:
+            st.pop("warm_since", None)
+
     def _sched_guard(self, now, ac):
         """排程被修改 → 推播新舊值與檢查結果；每天 21:30 檢查今晚／明天的排程，有問題才推播。"""
         sched = ac.get("sched")
@@ -488,6 +550,7 @@ class Notifier:
             if ac:
                 self._ice_guard(now, ac, snap if live_ok else None)
                 self._sched_guard(now, ac)
+                self._start_guard(now, ac)
             self._cmd_result(now)
             self._summary(now, snap, ems, mag)
             if (now - self.saved_at).total_seconds() >= 300:
