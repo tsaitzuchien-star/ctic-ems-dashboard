@@ -498,8 +498,30 @@ function Save($now, $d, $m, $cur, $tgt, $action, $note) {
   if ($action) { Write-Host $row }
 }
 
+# 外氣開機門檻守門（2026-11-13 Cliff 授權）：PLC 點 SGB1DC51_CHU1_OAH_SP（外氣低於它冰機不開機）固定 21.5°C。
+# 原本 22°C 時廠商反映太悶，同仁改 21.5 後好很多。每分鐘讀一次，高於 21.5 就寫回 21.5（最多每 10 分鐘寫一次）；
+# 低於 21.5 不動（只限制上限）。停用：C:\BMS_Export\oa_sp_guard_off.txt。
+$OA_SP_TAG = 'SGB1DC51_CHU1_OAH_SP'; $OA_SP_MAX = 21.5
+$script:oaSpAt = [datetime]::MinValue; $script:oaSpWriteAt = [datetime]::MinValue
+function Oa-Sp-Guard($now) {
+  if (($now - $script:oaSpAt).TotalSeconds -lt 60) { return }
+  $script:oaSpAt = $now
+  if (Test-Path (Join-Path $Out 'oa_sp_guard_off.txt')) { return }
+  $v = [CticDdeW]::Read([string[]]@($OA_SP_TAG)); $x = 0.0
+  if ($null -eq $v -or -not [double]::TryParse("$($v[0])", [Globalization.NumberStyles]::Float, $inv, [ref]$x)) { return }
+  if ($x -le 10 -or $x -ge 35 -or $x -le $OA_SP_MAX + 0.05) { return }
+  if (($now - $script:oaSpWriteAt).TotalMinutes -lt 10) { return }
+  $script:oaSpWriteAt = $now
+  if ($Live) {
+    $ok = [CticDdeW]::Poke($OA_SP_TAG, $OA_SP_MAX.ToString($inv))
+    $script:lastAction = "外氣開機門檻被改成 $x°C，已調回 $OA_SP_MAX°C（poke=$ok）"; $script:lastActionAt = $now.ToString('yyyy-MM-dd HH:mm:ss')
+  }
+  "$($now.ToString('s')) OA_SP $x -> $OA_SP_MAX live=$Live" | Out-File (Join-Path $Out 'mag_auto.log') -Append -Encoding utf8
+}
+
 function Step {
   $now = Get-Date
+  try { Oa-Sp-Guard $now } catch { }
   $m = Read-Mag
   $d = Read-Demand
   if (-not $m -or $null -eq $m.limit) { Save $now $d $m '' '' '' 'no-intouch'; return }
