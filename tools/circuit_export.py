@@ -123,6 +123,10 @@ def copy_ac_files(out_dir):
     names = [f"{p}_{d:%Y-%m-%d}.csv" for p in ("AC", "PLANT", "FCU", "mag_auto", "fcu_guard") for d in (today - dt.timedelta(days=1), today)]
     names += ["ac_latest.json", "mag_auto_status.json", "fcu_guard_status.json",
               "sched_cmd_result.json", "sched_cmd.log", "sched_changes.log"]
+    try:   # 匯出歷史（sched_cmd kind=hist）的合併檔與進度紀錄
+        names += [n for n in os.listdir(AC_SHARE) if n.startswith("hist_") and (n.endswith(".csv") or n.endswith(".log"))]
+    except OSError:
+        pass
     copied = 0
     try:
         for n in names:

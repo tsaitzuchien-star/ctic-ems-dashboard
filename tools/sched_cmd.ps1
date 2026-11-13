@@ -27,6 +27,11 @@
 #   {"kind":"event","date":"2026-11-12","from":"13:00","to":"17:00","zones":["會議廳"],"action":"remove"}       取消那一行
 #   場地只能是 會議廳 / 展演 / 訓練 / 全部；日期今天起 14 天內；時間 06:00–23:00。只登記，不會啟動冰機：
 #   寫完會讀那天的磁浮排程，沒涵蓋活動時段就在結果加 ⚠️ 提醒。
+# 匯出歷史（2026-11-14 起，Cliff 授權）：kind = hist，只讀 InTouch 歷史檔，不寫任何點位。
+#   {"kind":"hist","set":"CHU2","start":"2025-05-01","end":"2026-11-05"}
+#   set 只能是下面 $HIST_SETS 列的點位組；日期 2023-01-01 起、不晚於今天、一次最多 800 天。
+#   在背景跑 hist_export.ps1（每天一檔到 C:\BMS_Export\hist），跑完合併成 C:\BMS_Export\hist_<set>_<起>_<迄>.csv，
+#   過程記在 C:\BMS_Export\hist_<set>.log；監控電腦 circuit_export 會把這兩個檔複製到 Google 雲端 BMS自動匯出。
 # 停用：在 C:\BMS_Export 放 sched_cmd_off.txt。
 # 結果：C:\BMS_Export\sched_cmd_result.json（監控電腦讀到後推 LINE）與 sched_cmd.log。
 # 測試：powershell -ExecutionPolicy Bypass -File C:\BMS_Export\sched_cmd.ps1 -File 某指令.json -DryRun   （只檢查、不寫）
@@ -42,6 +47,13 @@ $ResultFile = Join-Path $Out 'sched_cmd_result.json'
 $MagOvFile = Join-Path $Out 'mag_limit_override.json'
 $EventFile = Join-Path $Out 'ac_events.txt'
 $EVENT_ZONES = @('會議廳', '展演', '訓練', '全部')
+$HIST_SETS = @{   # 點位組 → 只讀匯出的 InTouch 點位（都已勾「記錄歷史」，2026-11-05 DBDump 確認）
+  'CHU2' = @('SG_CHU2_Item30001', 'SG_CHU2_Item30003', 'SG_CHU2_Item30005', 'SG_CHU2_Item30007',
+             'SG_CHU2_Item30041', 'SG_CHU2_Item30043', 'SG_CHU2_Item30049', 'SG_CHU2_Item30051',
+             'SG_CHU2_Item40035', 'SG_CHU2_Item40001', 'SG_CHU2_Item46310',
+             'SGB1DC51_Sys_T09', 'SGB1DC51_Sys_T12', 'SGB1DC51_Sys_T09_offset', 'SGB1DC51_Sys_T12_offset', 'CHSYS_FLOW_NOW')
+}
+$HistScript = Join-Path $Out 'hist_export.ps1'
 function Event-Line($c) { return "$($c.date) $($c.from)-$($c.to) $(@($c.zones | ForEach-Object { "$_" }) -join ' ')" }
 function Event-Lines { if (Test-Path $EventFile) { return @(Get-Content $EventFile -Encoding UTF8 | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) } else { return @() } }
 $PREFIX = @{ ice = 'BCU_SCHI'; melt = 'BCU_SCHW'; chu2 = 'CHU2_SCH' }
@@ -165,6 +177,16 @@ function MagOv-Load {
 function MagOv-Text($e) { if ($null -eq $e) { return '沒有特別設定' } else { return "$($e.from)–$($e.to) 上限 $($e.pct)%" } }
 function Check-Change($c, $now) {
   # 回傳 $null = 通過；否則回傳擋下的原因
+  if ("$($c.kind)" -eq 'hist') {
+    if (-not $HIST_SETS.ContainsKey("$($c.set)")) { return "點位組 $($c.set) 不在白名單（只能 $($HIST_SETS.Keys -join ', ')）" }
+    $a = [datetime]::MinValue; $b = [datetime]::MinValue
+    if (-not [datetime]::TryParseExact("$($c.start)", 'yyyy-MM-dd', $inv, [Globalization.DateTimeStyles]::None, [ref]$a) -or
+        -not [datetime]::TryParseExact("$($c.end)", 'yyyy-MM-dd', $inv, [Globalization.DateTimeStyles]::None, [ref]$b)) { return "日期格式不對（$($c.start)–$($c.end)，要 yyyy-MM-dd）" }
+    if ($a -lt [datetime]'2023-01-01' -or $b -gt $now.Date -or $b -lt $a) { return "日期要在 2023-01-01 到今天之間，且開始不晚於結束（$($c.start)–$($c.end)）" }
+    if (($b - $a).TotalDays -gt 800) { return "一次最多 800 天（$($c.start)–$($c.end)）" }
+    if (-not (Test-Path $HistScript)) { return "沒有 $HistScript（要先用更新程式裝上 hist_export.ps1）" }
+    return $null
+  }
   if ("$($c.kind)" -eq 'event') {
     $dt = [datetime]::MinValue
     if (-not [datetime]::TryParseExact("$($c.date)", 'yyyy-MM-dd', $inv, [Globalization.DateTimeStyles]::None, [ref]$dt)) { return "日期 $($c.date) 格式不對（yyyy-MM-dd）" }
@@ -209,7 +231,7 @@ function Check-Change($c, $now) {
     if ($null -eq $cs) { return "照明迴路不對（要 all 或 $($LIGHT_CIRCUITS -join ',') 其中幾個）" }
     return $null
   }
-  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit / event）" }
+  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit / event / hist）" }
   $d = 0; if (-not [int]::TryParse("$($c.day)", [ref]$d) -or $d -lt 1 -or $d -gt 7) { return "星期 $($c.day) 不對（1–7）" }
   if (-not (Hm-Ok $c.on) -or -not (Hm-Ok $c.off)) { return "時間格式不對（$($c.on)–$($c.off)，要 HH:MM）" }
   if ("$($c.en)" -ne '0' -and "$($c.en)" -ne '1') { return "勾選 en 只能 0 或 1" }
@@ -324,7 +346,7 @@ if (($exp - $apv).TotalHours -gt 24) { $res.status = 'rejected'; $res.lines = @(
 $changes = @($cmd.changes)
 if ($changes.Count -lt 1 -or $changes.Count -gt 21) { $res.status = 'rejected'; $res.lines = @('沒有要改的項目，或一次超過 21 筆'); Save-Result $res; exit 0 }
 $why = @()
-foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } elseif ("$($c.kind)" -eq 'event') { "活動登記 $e" } else { "$(Day-Label $c.day) $e" }) } }
+foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } elseif ("$($c.kind)" -eq 'event') { "活動登記 $e" } elseif ("$($c.kind)" -eq 'hist') { "匯出歷史 $e" } else { "$(Day-Label $c.day) $e" }) } }
 if ($why.Count) { $res.status = 'rejected'; $res.lines = @('整筆指令沒有執行：') + $why; Save-Result $res; exit 0 }
 
 # ---- 寫入（WindowViewer 要開著） ----
@@ -333,6 +355,24 @@ if ($null -eq $probe) { $res.status = 'failed'; $res.lines = @('讀不到 InTouc
   ($res | ConvertTo-Json -Depth 6) | Out-File $ResultFile -Encoding utf8; Log "$($res.id) viewer down, will retry"; exit 0 }
 $allOk = $true
 foreach ($c in $changes) {
+  if ("$($c.kind)" -eq 'hist') {
+    $set = "$($c.set)"; $label = "匯出歷史 $set $($c.start)～$($c.end)"
+    $hlog = Join-Path $Out "hist_$set.log"; $lock = Join-Path $Out "hist_$set.pid"
+    if (Test-Path $lock) {
+      $old = 0; [void][int]::TryParse((Get-Content $lock -TotalCount 1), [ref]$old)
+      if ($old -and (Get-Process -Id $old -ErrorAction SilentlyContinue)) { $allOk = $false; $res.lines += "${label}：上一次還在跑（PID $old），這次沒有重開 ⚠️"; continue }
+    }
+    if ($DryRun) { $res.lines += "${label}：$($HIST_SETS[$set].Count) 個點位，每 15 分鐘一筆（試跑，沒開始）"; continue }
+    $hd = Join-Path $Out 'hist'
+    $args2 = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$HistScript`"", '-Start', "$($c.start)", '-End', "$($c.end)",
+               '-Tags', (@($HIST_SETS[$set]) -join ','), '-Prefix', $set, '-Interval', '15m', '-HistDir', 'auto',
+               '-Out', "`"$hd`"", '-MergeTo', "`"$Out`"", '-ThenMerge')
+    $p = Start-Process powershell.exe -WindowStyle Hidden -PassThru -ArgumentList $args2 `
+           -RedirectStandardOutput $hlog -RedirectStandardError (Join-Path $Out "hist_$set.err.log")
+    "$($p.Id)" | Out-File $lock -Encoding ascii
+    $res.lines += "${label}：已在背景開始匯出（$($HIST_SETS[$set].Count) 個點位，只讀歷史檔）✅ 進度看 hist_$set.log，完成後產生 hist_$($set)_<起>_<迄>.csv"
+    continue
+  }
   if ("$($c.kind)" -eq 'event') {
     $line = Event-Line $c; $isRm = ("$($c.action)" -eq 'remove')
     $label = "活動登記 $line"

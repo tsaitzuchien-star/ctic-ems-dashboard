@@ -29,6 +29,7 @@ $ALLOW = @{
     'tools/sched_cmd.ps1'  = @{ to = 'sched_cmd.ps1';  task = '' }
     'tools/mag_auto.ps1'   = @{ to = 'mag_auto.ps1';   task = 'CTIC_Mag_Auto' }
     'tools/fcu_guard.ps1'  = @{ to = 'fcu_guard.ps1';  task = '' }
+    'tools/hist_export.ps1' = @{ to = 'hist_export.ps1'; task = '' }
     'tools/update_cmd.ps1' = @{ to = 'update_cmd.ps1'; task = '' }
   }
   bms = @{
