@@ -42,6 +42,9 @@ $ALLOW = @{
   }
 }
 
+# 排程 → 主程式檔名（重啟時用來找殘留行程）
+$TASK_MAIN = @{ CTIC_Local_Live = 'local_live.py'; CTIC_Mag_Auto = 'mag_auto.ps1'; CTIC_AC_Logger = 'ac_logger.ps1' }
+
 function Log($m) { "$(Get-Date -f 'yyyy-MM-dd HH:mm:ss') $m" | Out-File $Log -Append -Encoding utf8 }
 function Save-Result($r) {
   ($r | ConvertTo-Json -Depth 5) | Out-File $ResultFile -Encoding utf8
@@ -140,7 +143,25 @@ $res.status = 'done'
 foreach ($t in $tasks) {
   if ($File) { $res.lines += "（測試：不重啟 $t）"; continue }
   schtasks /End /TN $t 2>&1 | Out-Null; Start-Sleep -Seconds 3
+  # 2026-11-13：schtasks /End 有時沒把舊程式關乾淨（舊 pythonw 還佔著 8088），新程式看似啟動、網站卻連不上。
+  # 所以 /End 之後，再把命令列含這支主程式的殘留行程確實關掉，才 /Run。
+  $main = $TASK_MAIN[$t]
+  if ($main) {
+    $left = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessId -ne $PID -and "$($_.CommandLine)" -like "*$main*" })
+    foreach ($p in $left) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch { } }
+    if ($left.Count) { $res.lines += "$t：關掉殘留的舊程式 $($left.Count) 個"; Start-Sleep -Seconds 2 }
+  }
   $o = schtasks /Run /TN $t 2>&1
   $res.lines += $(if ($LASTEXITCODE -eq 0) { "已重啟排程 $t" } else { "重啟 $t 失敗：$o ⚠️" })
+  if ($t -eq 'CTIC_Local_Live') {
+    # 重啟後實際連一次本機網站，確認真的有回應
+    $up = $false
+    for ($i = 0; $i -lt 12 -and -not $up; $i++) {
+      Start-Sleep -Seconds 5
+      try { $null = Invoke-WebRequest -Uri 'http://localhost:8088/' -UseBasicParsing -TimeoutSec 5; $up = $true } catch { }
+    }
+    $res.lines += $(if ($up) { "網站 localhost:8088 有回應 ✅" } else { "網站 localhost:8088 重啟後 60 秒仍沒回應 ⚠️ 請手動 schtasks /End、/Run CTIC_Local_Live" })
+    if (-not $up) { $res.status = 'failed' }
+  }
 }
 Save-Result $res

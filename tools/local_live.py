@@ -818,7 +818,14 @@ def main():
         print(f"網站檔案：{'有' if os.path.exists(os.path.join(SITE_DIR, 'index.html')) else '沒有'} {SITE_DIR}\\index.html")
         return
 
-    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    # 2026-11-13：Windows 上 allow_reuse_address（SO_REUSEADDR）會讓新程式和殘留的舊程式同時綁在 8088，
+    # 新程式顯示「啟動」但連線被送去卡住的舊程式。關掉它：連接埠被佔用就寫 log 並結束，不會假裝啟動成功。
+    ThreadingHTTPServer.allow_reuse_address = False
+    try:
+        httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    except OSError as e:
+        log(f"❗ 連接埠 {PORT} 被佔用（舊的 local_live 還在跑？），本次不啟動：{e}")
+        sys.exit(1)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     threading.Thread(target=fetch_forecast, daemon=True).start()
     log(f"本機即時網站啟動：http://localhost:{PORT}/")
