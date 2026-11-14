@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-14-u21",
+  "id": "2026-11-14-u20",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-14T07:56:30+08:00",
-  "expires": "2026-11-14T15:56:30+08:00",
-  "note": "PR #54 匯出歷史指令（第2次）：空調監控主機 hist_export.ps1（Cliff 執行）",
-  "sha": "cc648f11c7ab132c8f828b886f6c9af7cec80bb8",
+  "approved_at": "2026-11-14T09:37:48+08:00",
+  "expires": "2026-11-14T15:37:48+08:00",
+  "note": "PR #55：週末整天算下班，沒申請的送風機要關（活動區、警衛室照常）（Cliff 執行）",
+  "sha": "31d6ff360e9b18a0aa86aa42ece6682a8a466ce2",
   "files": [
-    { "pc": "ac", "file": "tools/hist_export.ps1" }
+    { "pc": "ac", "file": "tools/fcu_guard.ps1" }
   ]
 }
