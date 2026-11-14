@@ -1,12 +1,12 @@
 {
-  "id": "2026-11-14-x1-fcu-chu2",
+  "id": "2026-11-14-shot-install",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-14T09:40:25+08:00",
-  "expires": "2026-11-14T15:40:25+08:00",
-  "note": "PR #56 磁浮排程自動補勾（Cliff 好執行）；一併含 PR #55 週末關送風機（前兩次編號和其他對話重複沒執行，重送）",
-  "sha": "896d55a315bf1b604ccbc698618b1ad0a44bcda4",
+  "approved_at": "2026-11-14T10:23:12+08:00",
+  "expires": "2026-11-14T16:23:12+08:00",
+  "note": "PR #57 截圖指令（Cliff 好、執行）：空調監控主機 sched_cmd.ps1、監控電腦 circuit_export.py",
+  "sha": "008f3f79121502626cee7025c901f896688caf10",
   "files": [
-    { "pc": "ac", "file": "tools/fcu_guard.ps1" },
-    { "pc": "ac", "file": "tools/mag_auto.ps1" }
+    { "pc": "ac", "file": "tools/sched_cmd.ps1" },
+    { "pc": "bms", "file": "tools/circuit_export.py" }
   ]
 }
