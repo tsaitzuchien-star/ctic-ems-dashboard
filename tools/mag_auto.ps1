@@ -519,9 +519,65 @@ function Oa-Sp-Guard($now) {
   "$($now.ToString('s')) OA_SP $x -> $OA_SP_MAX live=$Live" | Out-File (Join-Path $Out 'mag_auto.log') -Append -Encoding utf8
 }
 
+# 磁浮排程自動補勾（2026-11-14 Cliff 授權：同仁忘記勾磁浮，可自己勾選啟動，事後通知）
+# 上班日（週一到週五，C:\BMS_Export\holidays.txt 列的日期除外）至少要涵蓋 07:30–18:00；
+# ac_events.txt 有登記的活動日，要涵蓋「活動開始前 30 分鐘 → 活動結束」。
+# 從需要時段開始前 30 分鐘到結束，每 5 分鐘讀當天的 CHU2_SCH 排程：沒勾 → 勾上；時間沒涵蓋 → 只加長、不縮短。
+# 已經過了開機時間才補 → 開機時間設成 2 分鐘後（InTouch 在開機那一分鐘才觸發）。外氣低於門檻沒開是規則，不在這裡處理。
+# 只寫 CHU2_SCH 當天的 5 個點，不碰 *_Run。停用：C:\BMS_Export\chu2_guard_off.txt。每天最多補 3 次。
+$WORK_ON = '07:30'; $WORK_OFF = '18:00'
+$script:chu2At = [datetime]::MinValue; $script:chu2Day = ''; $script:chu2N = 0
+function Hm-Min($s) { $a = "$s".Split(':'); return [int]$a[0] * 60 + [int]$a[1] }
+function Min-Hm($m) { return '{0:00}:{1:00}' -f [math]::Floor($m / 60), ($m % 60) }
+function Chu2-Need($t) {
+  $d = $t.ToString('yyyy-MM-dd'); $on = $null; $off = $null; $why = @()
+  $hol = Join-Path $Out 'holidays.txt'
+  $isHol = (Test-Path $hol) -and (@(Get-Content $hol | ForEach-Object { ($_ -replace '#.*$', '').Trim() }) -contains $d)
+  if ($t.DayOfWeek -ne 'Saturday' -and $t.DayOfWeek -ne 'Sunday' -and -not $isHol) { $on = Hm-Min $WORK_ON; $off = Hm-Min $WORK_OFF; $why += '上班日' }
+  if (Test-Path $EventFile) {
+    foreach ($line in (Get-Content $EventFile -Encoding UTF8)) {
+      $l = ($line -replace '#.*$', '').Trim(); $p = @($l -split '\s+')
+      if ($p.Count -lt 3 -or $p[0] -ne $d -or $p[1] -notmatch '^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$') { continue }
+      $s1 = (Hm-Min $matches[1]) - $EVENT_PRECOOL_MIN; $e1 = Hm-Min $matches[2]
+      $on = $(if ($null -eq $on) { $s1 } else { [math]::Min($on, $s1) }); $off = $(if ($null -eq $off) { $e1 } else { [math]::Max($off, $e1) }); $why += "活動 $($p[1])"
+    }
+  }
+  if ($null -eq $on) { return $null }
+  return [pscustomobject]@{ on = $on; off = $off; why = ($why -join '、') }
+}
+function Chu2-Guard($now) {
+  if (($now - $script:chu2At).TotalSeconds -lt 300) { return }
+  $script:chu2At = $now
+  if (Test-Path (Join-Path $Out 'chu2_guard_off.txt')) { return }
+  $day = $now.ToString('yyyy-MM-dd'); if ($script:chu2Day -ne $day) { $script:chu2Day = $day; $script:chu2N = 0 }
+  if ($script:chu2N -ge 3) { return }
+  $need = Chu2-Need $now; if (-not $need) { return }
+  $nm = $now.Hour * 60 + $now.Minute
+  if ($nm -lt $need.on - 30 -or $nm -ge $need.off) { return }
+  $dn = $(if ($now.DayOfWeek -eq 'Sunday') { 7 } else { [int]$now.DayOfWeek }); $dd = '{0:00}' -f $dn
+  $tags = [string[]]@("CHU2_SCH_$($dd)_StartHH", "CHU2_SCH_$($dd)_StartMM", "CHU2_SCH_$($dd)_StopHH", "CHU2_SCH_$($dd)_StopMM", "CHU2_SCH_$($dd)SCHEn")
+  $v = [CticDdeW]::Read($tags); if ($null -eq $v) { return }
+  $n = @(); foreach ($x in $v) { $y = 0.0; if (-not [double]::TryParse("$x", [Globalization.NumberStyles]::Float, $inv, [ref]$y)) { return }; $n += [int][math]::Round($y) }
+  $curOn = $n[0] * 60 + $n[1]; $curOff = $n[2] * 60 + $n[3]; $en = $n[4]
+  $okNow = ($en -eq 1 -and $curOn -le $need.on -and $curOff -ge $need.off)
+  if ($okNow) { return }
+  $newOn = $(if ($en -eq 1) { [math]::Min($curOn, $need.on) } else { $need.on }); $newOff = $(if ($en -eq 1) { [math]::Max($curOff, $need.off) } else { [math]::Max($need.off, $curOff) })
+  if ($nm -ge $newOn) { $newOn = $nm + 2 }          # 已過開機時間：設 2 分鐘後讓 InTouch 觸發
+  if ($newOff -le $newOn) { return }
+  $script:chu2N++
+  $old = "$(Min-Hm $curOn)–$(Min-Hm $curOff)（$(if ($en -eq 1) { '有勾' } else { '沒勾' })）"; $new = "$(Min-Hm $newOn)–$(Min-Hm $newOff)（有勾）"
+  if ($Live) {
+    $vals = @([math]::Floor($newOn / 60), ($newOn % 60), [math]::Floor($newOff / 60), ($newOff % 60), 1)
+    for ($i = 0; $i -lt 5; $i++) { $null = [CticDdeW]::Poke($tags[$i], "$($vals[$i])"); Start-Sleep -Milliseconds 300 }
+    $script:lastAction = "磁浮排程自動補勾（$($need.why)）：今天 $old → $new"; $script:lastActionAt = $now.ToString('yyyy-MM-dd HH:mm:ss')
+  }
+  "$($now.ToString('s')) CHU2_GUARD $($need.why) $old -> $new live=$Live" | Out-File (Join-Path $Out 'mag_auto.log') -Append -Encoding utf8
+}
+
 function Step {
   $now = Get-Date
   try { Oa-Sp-Guard $now } catch { }
+  try { Chu2-Guard $now } catch { }
   $m = Read-Mag
   $d = Read-Demand
   if (-not $m -or $null -eq $m.limit) { Save $now $d $m '' '' '' 'no-intouch'; return }
