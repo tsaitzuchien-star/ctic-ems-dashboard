@@ -139,6 +139,14 @@ def copy_ac_files(out_dir):
                 continue
             shutil.copy2(src, dst)
             copied += 1
+        sd = os.path.join(AC_SHARE, "shots")   # 截圖（sched_cmd kind=screenshot）
+        if os.path.isdir(sd):
+            od = os.path.join(out_dir, "shots")
+            os.makedirs(od, exist_ok=True)
+            for n in os.listdir(sd):
+                if n.startswith("shot_") and n.endswith(".png") and not os.path.exists(os.path.join(od, n)):
+                    shutil.copy2(os.path.join(sd, n), os.path.join(od, n))
+                    copied += 1
         log(f"AC files copied: {copied}")
     except OSError as e:
         log(f"AC copy failed: {e}")

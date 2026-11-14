@@ -32,6 +32,11 @@
 #   set 只能是下面 $HIST_SETS 列的點位組；日期 2023-01-01 起、不晚於今天、一次最多 800 天。
 #   在背景跑 hist_export.ps1（每天一檔到 C:\BMS_Export\hist），跑完合併成 C:\BMS_Export\hist_<set>_<起>_<迄>.csv，
 #   過程記在 C:\BMS_Export\hist_<set>.log；監控電腦 circuit_export 會把這兩個檔複製到 Google 雲端 BMS自動匯出。
+# 截圖（2026-11-14 起，Cliff 授權）：kind = screenshot，只截畫面，不點滑鼠、不按鍵、不寫任何點位。
+#   {"kind":"screenshot"}
+#   存到 C:\BMS_Export\shots：整個螢幕 shot_<時間>_screen.png，與 InTouch WindowViewer 視窗本身 shot_<時間>_intouch.png
+#   （用 PrintWindow，被其他視窗擋住也截得到 InTouch 目前顯示的那一頁）。只保留最近 30 張。
+#   監控電腦 circuit_export 會把 shots 複製到 Google 雲端 BMS自動匯出\shots。螢幕鎖定時整個螢幕那張可能是黑的。
 # 停用：在 C:\BMS_Export 放 sched_cmd_off.txt。
 # 結果：C:\BMS_Export\sched_cmd_result.json（監控電腦讀到後推 LINE）與 sched_cmd.log。
 # 測試：powershell -ExecutionPolicy Bypass -File C:\BMS_Export\sched_cmd.ps1 -File 某指令.json -DryRun   （只檢查、不寫）
@@ -175,8 +180,52 @@ function MagOv-Load {
   return $o
 }
 function MagOv-Text($e) { if ($null -eq $e) { return '沒有特別設定' } else { return "$($e.from)–$($e.to) 上限 $($e.pct)%" } }
+function Take-Shots {
+  # 只讀畫面：不點、不按、不改視窗大小或位置
+  Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+  if (-not ('CticShot' -as [type])) {
+    Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
+using System; using System.Drawing; using System.Runtime.InteropServices;
+public static class CticShot {
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint f);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  public static Bitmap Window(IntPtr h) {
+    RECT r; GetWindowRect(h, out r); int w = r.R - r.L, ht = r.B - r.T;
+    if (w <= 0 || ht <= 0) return null;
+    Bitmap b = new Bitmap(w, ht);
+    using (Graphics g = Graphics.FromImage(b)) { IntPtr dc = g.GetHdc(); try { PrintWindow(h, dc, 2); } finally { g.ReleaseHdc(dc); } }
+    return b;
+  }
+}
+'@
+  }
+  $dir = Join-Path $Out 'shots'; if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir | Out-Null }
+  $ts = Get-Date -Format 'yyyyMMdd_HHmmss'; $lines = @()
+  $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+  $bmp = New-Object System.Drawing.Bitmap $vs.Width, $vs.Height
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  try { $g.CopyFromScreen($vs.Left, $vs.Top, 0, 0, $bmp.Size) } finally { $g.Dispose() }
+  $f1 = Join-Path $dir "shot_${ts}_screen.png"; $bmp.Save($f1, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+  $lines += "截圖：整個螢幕 → shots\$(Split-Path $f1 -Leaf) ✅"
+  $v = Get-Process -Name view -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+  if ($null -eq $v) { $lines += '截圖：找不到 InTouch WindowViewer 視窗（view.exe），只存了整個螢幕 ⚠️' }
+  elseif ([CticShot]::IsIconic($v.MainWindowHandle)) { $lines += '截圖：InTouch 視窗目前縮到最小，沒辦法單獨截 ⚠️' }
+  else {
+    $wb = [CticShot]::Window($v.MainWindowHandle)
+    if ($null -eq $wb) { $lines += '截圖：InTouch 視窗大小是 0，沒截到 ⚠️' }
+    else {
+      $f2 = Join-Path $dir "shot_${ts}_intouch.png"; $wb.Save($f2, [System.Drawing.Imaging.ImageFormat]::Png); $wb.Dispose()
+      $lines += "截圖：InTouch 視窗「$($v.MainWindowTitle)」→ shots\$(Split-Path $f2 -Leaf) ✅"
+    }
+  }
+  Get-ChildItem $dir -Filter 'shot_*.png' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 30 | Remove-Item -ErrorAction SilentlyContinue
+  return $lines
+}
 function Check-Change($c, $now) {
   # 回傳 $null = 通過；否則回傳擋下的原因
+  if ("$($c.kind)" -eq 'screenshot') { return $null }
   if ("$($c.kind)" -eq 'hist') {
     if (-not $HIST_SETS.ContainsKey("$($c.set)")) { return "點位組 $($c.set) 不在白名單（只能 $($HIST_SETS.Keys -join ', ')）" }
     $a = [datetime]::MinValue; $b = [datetime]::MinValue
@@ -231,7 +280,7 @@ function Check-Change($c, $now) {
     if ($null -eq $cs) { return "照明迴路不對（要 all 或 $($LIGHT_CIRCUITS -join ',') 其中幾個）" }
     return $null
   }
-  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit / event / hist）" }
+  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit / event / hist / screenshot）" }
   $d = 0; if (-not [int]::TryParse("$($c.day)", [ref]$d) -or $d -lt 1 -or $d -gt 7) { return "星期 $($c.day) 不對（1–7）" }
   if (-not (Hm-Ok $c.on) -or -not (Hm-Ok $c.off)) { return "時間格式不對（$($c.on)–$($c.off)，要 HH:MM）" }
   if ("$($c.en)" -ne '0' -and "$($c.en)" -ne '1') { return "勾選 en 只能 0 或 1" }
@@ -346,7 +395,7 @@ if (($exp - $apv).TotalHours -gt 24) { $res.status = 'rejected'; $res.lines = @(
 $changes = @($cmd.changes)
 if ($changes.Count -lt 1 -or $changes.Count -gt 21) { $res.status = 'rejected'; $res.lines = @('沒有要改的項目，或一次超過 21 筆'); Save-Result $res; exit 0 }
 $why = @()
-foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } elseif ("$($c.kind)" -eq 'event') { "活動登記 $e" } elseif ("$($c.kind)" -eq 'hist') { "匯出歷史 $e" } else { "$(Day-Label $c.day) $e" }) } }
+foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } elseif ("$($c.kind)" -eq 'event') { "活動登記 $e" } elseif ("$($c.kind)" -eq 'hist') { "匯出歷史 $e" } elseif ("$($c.kind)" -eq 'screenshot') { "截圖 $e" } else { "$(Day-Label $c.day) $e" }) } }
 if ($why.Count) { $res.status = 'rejected'; $res.lines = @('整筆指令沒有執行：') + $why; Save-Result $res; exit 0 }
 
 # ---- 寫入（WindowViewer 要開著） ----
@@ -355,6 +404,11 @@ if ($null -eq $probe) { $res.status = 'failed'; $res.lines = @('讀不到 InTouc
   ($res | ConvertTo-Json -Depth 6) | Out-File $ResultFile -Encoding utf8; Log "$($res.id) viewer down, will retry"; exit 0 }
 $allOk = $true
 foreach ($c in $changes) {
+  if ("$($c.kind)" -eq 'screenshot') {
+    if ($DryRun) { $res.lines += '截圖：會存整個螢幕與 InTouch 視窗各一張（試跑，沒截）'; continue }
+    try { $res.lines += @(Take-Shots) } catch { $allOk = $false; $res.lines += "截圖失敗：$($_.Exception.Message) ❌" }
+    continue
+  }
   if ("$($c.kind)" -eq 'hist') {
     $set = "$($c.set)"; $label = "匯出歷史 $set $($c.start)～$($c.end)"
     $hlog = Join-Path $Out "hist_$set.log"; $lock = Join-Path $Out "hist_$set.pid"
