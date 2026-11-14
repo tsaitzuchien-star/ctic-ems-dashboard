@@ -4,7 +4,7 @@
 #  2) 加班空調：平日 18:00 以後（到隔天 07:00），運轉中但不在申請名單的送風機 → 關機（_Run=0）。
 #     名單：C:\BMS_Export\afterhours_allow_yyyy-MM-dd.txt（當天，優先）或 afterhours_allow.txt，
 #     一行一個房號（例如 B239）或面板（例如 SG_2F31_P25），可加結束時間（例如 C303 19:00），# 之後是註解。沒有名單檔 → 這條不執行；空檔 = 沒人申請。
-#     房號 ↔ 面板對照：C:\BMS_Export\fcu_rooms.csv。週末先不做。
+#     房號 ↔ 面板對照：C:\BMS_Export\fcu_rooms.csv。週末（2026-11-14 起）整天都算下班。
 # 永不碰：C:\BMS_Export\fcu_guard_exclude.txt（一行一個標籤開頭）。
 # 預設「試跑」：只記錄會怎麼做。加 -Live 才寫入。停用：放 C:\BMS_Export\fcu_guard_off.txt。
 # 記錄：fcu_guard_yyyy-MM-dd.csv；狀態：fcu_guard_status.json
@@ -157,7 +157,9 @@ for ($k = 0; $k -lt $tags.Count; $k += 60) {
 
 # 加班名單
 $hm = $now.ToString('HH:mm')
-$after = (-not $NoAfter) -and ($now.DayOfWeek -ne 'Saturday') -and ($now.DayOfWeek -ne 'Sunday') -and ($hm -ge $AFTER_START -or $hm -lt $AFTER_END)
+# 2026-11-14 Cliff：週末也一樣，沒有申請的送風機要關（週六、週日整天都算下班；活動區、警衛室、清潔時段、名單內照常）
+$wkend = ($now.DayOfWeek -eq 'Saturday') -or ($now.DayOfWeek -eq 'Sunday')
+$after = (-not $NoAfter) -and ($wkend -or $hm -ge $AFTER_START -or $hm -lt $AFTER_END)
 $allow = $null
 if ($after) {
   $day = $(if ($hm -lt $AFTER_END) { $now.AddDays(-1) } else { $now })
@@ -222,7 +224,7 @@ for ($i = 0; $i -lt $units.Count; $i++) {
   $acts += "$u [$rm] $act ($before)"
 }
 # 白天（07:00–18:00）把昨晚調到 28°C 的送風機調回 25°C（不管有沒有開機）
-if ($raised.Count -and $hm -ge $RESTORE_FROM -and $hm -lt $RESTORE_UNTIL) {
+if ($raised.Count -and -not $wkend -and $hm -ge $RESTORE_FROM -and $hm -lt $RESTORE_UNTIL) {   # 週末白天不還原（不然 28°C 和 25°C 會來回調）
   foreach ($u in @($raised.Keys)) {
     if ($writes -ge $MAX_WRITES) { $status.note = "max-writes $MAX_WRITES"; break }
     $ok = ''
