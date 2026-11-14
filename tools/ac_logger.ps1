@@ -96,6 +96,11 @@ foreach ($t in 'BCU_TR11','CHP5_VFD_FB','CHP6_VFD_FB','CT1_VFD_FB','CT2_VFD_FB',
 foreach ($n in 1..19) { if ($n -ne 16) { $plantTags.Add(('{0}Sys_T{1:00}' -f $d, $n)) } }
 # 外氣鎖定（2026-11-10）：現場 PLC 規則「外氣溫度低於設定值，冰機不開機」。畫面「冰水主機系統」左上角，只讀。
 $plantTags.Add("$($d)CHU1_OAH"); $plantTags.Add("$($d)CHU1_OAH_SP")
+# 儲冰／融冰搭配查核（2026-11-15，明年夏月規劃）：冰桶低限自動啟動、卸載點、融冰板熱與滷水泵 PID 設定、BCU 圖控手自動。全部只讀。
+foreach ($t in 'CHU1_Sys_IcePoint_Load','CHU2_Sys_IcePoint_Load','Sys_IceSetPoint','BCU_Demanding','CHU2_Demanding',
+               'BCU_SCADA_AM','BCU_Sys_Run','CHU2_SCADA_AM','CHU2_Sys_Run','Hex02_Valve01_PID_SP','Hex02_Valve01_AM','Hex02_Valve01_AOP',
+               'Hex01_Valve01_PID_SP','BP3_PID_SP','BP4_PID_SP','BP3_VFD_AOP','BP4_VFD_AOP','BCU_Valve01_FB','BCU_Valve01_SCADA_AM',
+               'Sys_IB_Limit01_offset','Sys_IB_Limit02_offset') { $plantTags.Add("$d$t") }
 foreach ($u in 'AHU_111','AHU_112','AHU_121','AHU_122','AHU_1B1','AHU_1B2','AHU_G11','AHU_G21','AHU_G31','AHU_GB1','AHU_GB2',
                'PAH_111','PAH_112','PAH_121','PAH_122','PAH_131','PAH_132','PAH_211','PAH_212','PAH_213','PAH_221','PAH_222','PAH_231','PAH_232','PAH_241','PAH_242') {
   $plantTags.Add("$($u)_Fan_ST"); $plantTags.Add("$($u)_RA_T"); $plantTags.Add("$($u)_CV01_FB")
