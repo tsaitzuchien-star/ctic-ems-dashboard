@@ -1,10 +1,10 @@
 {
-  "id": "2026-11-14-h1",
+  "id": "2026-11-14-shot1",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-14T08:09:00+08:00",
-  "expires": "2026-11-14T20:09:00+08:00",
-  "note": "ISO 第4項：匯出 CHU-2 歷史（只讀）2025-05-01～2026-11-05（Cliff 執行）",
+  "approved_at": "2026-11-14T10:29:28+08:00",
+  "expires": "2026-11-14T12:29:28+08:00",
+  "note": "ISO 截圖測試（只截畫面，不點不按；Cliff 執行）",
   "changes": [
-    { "kind": "hist", "set": "CHU2", "start": "2025-05-01", "end": "2026-11-05" }
+    { "kind": "screenshot" }
   ]
 }
