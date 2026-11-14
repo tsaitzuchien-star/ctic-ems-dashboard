@@ -1,12 +1,11 @@
 {
-  "id": "2026-11-14-shot-install",
+  "id": "2026-11-15-ice-tags-install",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-14T10:23:12+08:00",
-  "expires": "2026-11-14T16:23:12+08:00",
-  "note": "PR #57 截圖指令（Cliff 好、執行）：空調監控主機 sched_cmd.ps1、監控電腦 circuit_export.py",
-  "sha": "008f3f79121502626cee7025c901f896688caf10",
+  "approved_at": "2026-11-15T07:25:09+08:00",
+  "expires": "2026-11-15T15:25:09+08:00",
+  "note": "PR #58 加讀儲冰／融冰查核點位（只讀；Cliff 合併並回執行）：空調監控主機 ac_logger.ps1",
+  "sha": "ee319162068497262816e71f86262aae2de59a2f",
   "files": [
-    { "pc": "ac", "file": "tools/sched_cmd.ps1" },
-    { "pc": "bms", "file": "tools/circuit_export.py" }
+    { "pc": "ac", "file": "tools/ac_logger.ps1" }
   ]
 }
