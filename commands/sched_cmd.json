@@ -1,9 +1,9 @@
 {
-  "id": "2026-11-14-shot1",
+  "id": "2026-11-14-shot2",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-14T10:29:28+08:00",
-  "expires": "2026-11-14T12:29:28+08:00",
-  "note": "ISO 截圖測試（只截畫面，不點不按；Cliff 執行）",
+  "approved_at": "2026-11-14T10:35:54+08:00",
+  "expires": "2026-11-14T12:35:54+08:00",
+  "note": "ISO 截圖第 2 次（只截畫面，不點不按；Cliff 要求）",
   "changes": [
     { "kind": "screenshot" }
   ]
