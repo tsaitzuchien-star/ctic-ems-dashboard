@@ -1,9 +1,9 @@
 {
-  "id": "2026-11-14-u21",
+  "id": "2026-11-14-x1-fcu-chu2",
   "requested_by": "Cliff Tsai",
   "approved_at": "2026-11-14T09:40:25+08:00",
   "expires": "2026-11-14T15:40:25+08:00",
-  "note": "PR #56 磁浮排程自動補勾（Cliff 好執行）；一併含 PR #55 週末關送風機（避免 u20 尚未執行被覆蓋）",
+  "note": "PR #56 磁浮排程自動補勾（Cliff 好執行）；一併含 PR #55 週末關送風機（前兩次編號和其他對話重複沒執行，重送）",
   "sha": "896d55a315bf1b604ccbc698618b1ad0a44bcda4",
   "files": [
     { "pc": "ac", "file": "tools/fcu_guard.ps1" },
