@@ -476,11 +476,11 @@
                     ${rtRow('冰水出水／回水', 'rt-chw', '°C')}${rtRow('冷卻水出水／回水', 'rt-cw', '°C')}${rtRow('COP／kW/RT', 'rt-cop')}${rtRow('今日運轉（迴路電表）', 'rt-magday')}</div>
                 <div class="glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-cubes-stacked mr-2 text-cyan-300"></i>儲冰系統 BCU-1／冰桶</h3>
                     ${rtBar('冰桶 01 液位', 'rt-ice1')}${rtBar('冰桶 02 液位', 'rt-ice2')}
-                    ${rtRow('儲冰槽出水／入水', 'rt-tank', '°C')}${rtRow('冰桶低限自動啟動', 'rt-icesp', '%')}${rtRow('BCU-1 冰水出水／回水', 'rt-bcut', '°C')}${rtRow('BCU-1 功率（最近 15 分）', 'rt-bcukw', 'kW')}
+                    ${rtRow('儲冰槽出水／入水', 'rt-tank', '°C')}${rtRow('冰桶低限自動啟動', 'rt-icesp')}${rtRow('BCU-1 冰水出水／回水', 'rt-bcut', '°C')}${rtRow('BCU-1 功率（最近 15 分）', 'rt-bcukw', 'kW')}
                     <div class="text-sm mt-2" id="rt-iceruns"></div></div>
                 <div class="glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-droplet mr-2 text-blue-300"></i>冰水系統</h3>
                     ${rtRow('冰水流量', 'rt-flow', 'm³/h')}${rtRow('冰水累積流量', 'rt-flowtot', 'm³')}
-                    <p class="text-xs text-slate-400 mt-3 mb-1">磁浮平均負載（%）與冰桶平均液位（%），最近 4 小時</p><div class="h-40"><canvas id="rtAc"></canvas></div>
+                    <p class="text-xs text-slate-400 mt-3 mb-1">磁浮平均負載（%）與冰桶平均液位（%），最近 12 小時</p><div class="h-40"><canvas id="rtAc"></canvas></div>
                     <p class="text-xs mt-2" id="rt-acnote"></p></div>
             </div>
             <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-temperature-half mr-2 text-orange-300"></i>外氣與小型送風機（FCU）</h3>
@@ -851,7 +851,7 @@
                   rtSet('rt-cop', kwe > 5 && dT > 0.5 && q > 0 ? `${fmt(q / kwe, 2)}／${fmt(kwe / rtn, 2)} <span class="text-xs text-slate-400">（${fmt(rtn, 0)} RT・溫差 ${fmt(dT, 1)}°C）</span>` : '<span class="text-slate-400">冰機未運轉</span>'); }
                 updateLight(a.light);
                 rtPct('rt-ice1', a.ice01_pct); rtPct('rt-ice2', a.ice02_pct);
-                rtSet('rt-tank', `${fmt(a.tank_out_c, 1)}／${fmt(a.tank_in_c, 1)}`); rtSet('rt-icesp', fmt(a.ice_low_sp, 0)); rtSet('rt-bcut', `${fmt(a.bcu_chws_c, 1)}／${fmt(a.bcu_chwr_c, 1)}`);
+                rtSet('rt-tank', `${fmt(a.tank_out_c, 1)}／${fmt(a.tank_in_c, 1)}`); rtSet('rt-icesp', fmt(a.ice_low_sp, 0) + ' %' + (a.plant && a.plant.SGB1DC51_CHU2_Sys_IcePoint_Load != null ? (a.plant.SGB1DC51_CHU2_Sys_IcePoint_Load ? ' <span class="text-xs text-amber-300">（低於此值會自動開磁浮 CHU-2：已致能）</span>' : ' <span class="text-xs text-slate-400">（自動開磁浮：未致能）</span>') : '')); rtSet('rt-bcut', `${fmt(a.bcu_chws_c, 1)}／${fmt(a.bcu_chwr_c, 1)}`);
                 rtSet('rt-flow', fmt(a.flow_m3h, 1)); rtSet('rt-flowtot', fmt(a.flow_tot_m3, 0));
                 const age = a.time ? (Date.now() - new Date(a.time.replace(' ', 'T') + '+08:00')) / 60000 : null;
                 rtSet('rt-acnote', !a.viewer_ok ? '<span class="text-amber-300">空調監控主機的 WindowViewer 沒開，讀不到最新值</span>' : age != null && age > 5 ? `<span class="text-amber-300">空調資料 ${Math.round(age)} 分鐘沒更新</span>` : `<span class="text-slate-500">空調資料時間 ${a.time.slice(11, 16)}</span>`);

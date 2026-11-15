@@ -201,7 +201,8 @@ function Read-Once {
           if ([double]::TryParse($pv[$i], [Globalization.NumberStyles]::Float, $inv, [ref]$x)) { $x = [math]::Round($x,2); $pl[$plantTags[$i]] = $x; $row += $x.ToString($inv) } else { $row += '' }
         }
         $j['plant'] = $pl
-        $j['oat_c'] = $pl["$($d)CHU1_OAH"]; $j['oat_sp_c'] = $pl["$($d)CHU1_OAH_SP"]   # 外氣溫度／開機門檻
+        # 注意：不能用 $d 組標籤名，上面解析數值的迴圈把 $d 蓋成 0.0（2026-11-16 修正：oat_c 之前一直是 null）
+        $j['oat_c'] = $pl['SGB1DC51_CHU1_OAH']; $j['oat_sp_c'] = $pl['SGB1DC51_CHU1_OAH_SP']   # 外氣溫度／開機門檻
         $j['oat_locked'] = $(if ($null -ne $j['oat_c'] -and $null -ne $j['oat_sp_c']) { [int]($j['oat_c'] -lt $j['oat_sp_c']) } else { $null })   # 1 = 外氣低於門檻，冰機依規則不開機
         $pf = Join-Path $Out ('PLANT_' + $now.ToString('yyyy-MM-dd') + '.csv')
         $ph = (@('time') + $plantTags) -join ','
