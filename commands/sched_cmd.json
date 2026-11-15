@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-15-x1-b239-read",
+  "id": "2026-11-15-x1-wkend-untick",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-15T16:03:22+08:00",
-  "expires": "2026-11-15T18:03:22+08:00",
-  "note": "只讀 B239 兩台送風機現況（試跑，不寫入；Cliff 16:03 執行）",
-  "dry_run": true,
+  "approved_at": "2026-11-14T10:12:34+08:00",
+  "expires": "2026-11-15T23:20:00+08:00",
+  "note": "汎德活動結束：週六、週日磁浮排程取消勾選（時間改回活動前 10:00–17:00）；Cliff 11/14 10:12 事先交代",
   "changes": [
-    { "kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "off" }
+    { "kind": "chu2", "day": 6, "on": "10:00", "off": "17:00", "en": 0 },
+    { "kind": "chu2", "day": 7, "on": "10:00", "off": "17:00", "en": 0 }
   ]
 }
