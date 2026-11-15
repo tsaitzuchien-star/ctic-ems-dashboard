@@ -32,6 +32,17 @@ LEVELS = (1.00, 0.95, 0.90)
 SUMMARY_AM, SUMMARY_PM = "08:00", "19:10"
 
 
+def _hist_baseline():
+    """歷史人工基準（網站同一份）：C:\\BMS_Export\\site\\data\\savings_baseline.json，沒有就找本程式旁邊。"""
+    for p in (os.path.join(HERE, "site", "data", "savings_baseline.json"), os.path.join(HERE, "savings_baseline.json")):
+        try:
+            with open(p, encoding="utf-8-sig") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 def _log(msg):
     try:
         with open(LOG, "a", encoding="utf-8") as f:
@@ -342,7 +353,9 @@ class Notifier:
         return f"台電電表 {_f(d['kwh'])} 度＋太陽能 {_f(pv)} 度\n總用電 {_f(d['kwh'] + pv)} 度"
 
     def _savings(self, day, d):
-        """節電成效：自動控制當天的磁浮度數 vs 人工時期同類日（平日／假日）最近 10 天平均。"""
+        """節電成效：自動控制當天的磁浮度數 vs 人工時期同類日（平日／假日）平均。
+        line_state 裡人工日不足 3 天時，改用歷史基準 site\\data\\savings_baseline.json
+        （InTouch 歷史 2026-10-16～11-05 人工控制日，和網站「節電成效」同一份）。"""
         if not d.get("live"):
             return "節電成效：尚未由自動控制接手（試跑／人工）"
         days = self.state["days"]
@@ -350,14 +363,23 @@ class Notifier:
                and v.get("wd") == d.get("wd") and (v.get("mag") or {}).get("kwh")][-10:]
         live_days = [(k, v) for k, v in sorted(days.items()) if k <= day and v.get("live") and (v.get("mag") or {}).get("kwh")]
         mk = (d.get("mag") or {}).get("kwh")
-        if len(ref) < 3 or mk is None:
-            return "節電成效：人工時期基準資料不足（需至少 3 天），暫不計算"
-        base = sum(ref) / len(ref)
+        if mk is None:
+            return "節電成效：磁浮度數缺，暫不計算"
+        if len(ref) >= 3:
+            base, label = sum(ref) / len(ref), f"人工時期 {len(ref)} 天平均"
+        else:
+            hb = (_hist_baseline() or {}).get("weekday" if d.get("wd") else "weekend") or {}
+            if not hb.get("mag_day") or len(hb.get("days", [])) < 3:
+                return "節電成效：人工時期基準資料不足（需至少 3 天），暫不計算"
+            base = hb["mag_day"]
+            label = f"歷史人工日 {len(hb['days'])} 天平均，{hb['days'][0][5:]}～{hb['days'][-1][5:]}"
         save = base - mk
         cum = sum(base - v["mag"]["kwh"] for k, v in live_days if v.get("wd") == d.get("wd"))
-        return (f"節電成效（磁浮，對比人工時期 {len(ref)} 天平均 {_f(base)} 度）\n"
+        kind = "平日" if d.get("wd") else "假日"
+        return (f"節電成效（磁浮，{kind}，對比{label} {_f(base)} 度）\n"
                 f"昨日{'省' if save >= 0 else '多用'} {_f(abs(save))} 度（{_f(abs(save) / base * 100, 1)}%）\n"
-                f"接手以來累計 {_f(cum)} 度・約 {_f(cum * 4)} 元\n※ 未做天氣校正，僅供參考")
+                f"接手以來{kind}累計{'省' if cum >= 0 else '多用'} {_f(abs(cum))} 度・約 {_f(abs(cum) * 4)} 元\n"
+                "※ 未做天氣校正；基準日較熱，天涼時省電量會偏高，假日有活動時不能比較，僅供參考")
 
     def _ice_guard(self, now, ac, snap):
         """製冰主機白天運轉（尤其和磁浮同時開）立刻推播；夏月平日尖峰磁浮還在轉也推播。"""
