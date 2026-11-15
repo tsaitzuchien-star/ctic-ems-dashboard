@@ -851,7 +851,7 @@
                   rtSet('rt-cop', kwe > 5 && dT > 0.5 && q > 0 ? `${fmt(q / kwe, 2)}／${fmt(kwe / rtn, 2)} <span class="text-xs text-slate-400">（${fmt(rtn, 0)} RT・溫差 ${fmt(dT, 1)}°C）</span>` : '<span class="text-slate-400">冰機未運轉</span>'); }
                 updateLight(a.light);
                 rtPct('rt-ice1', a.ice01_pct); rtPct('rt-ice2', a.ice02_pct);
-                rtSet('rt-tank', `${fmt(a.tank_out_c, 1)}／${fmt(a.tank_in_c, 1)}`); rtSet('rt-icesp', fmt(a.ice_low_sp, 0) + ' %' + (a.plant && a.plant.SGB1DC51_CHU2_Sys_IcePoint_Load != null ? (a.plant.SGB1DC51_CHU2_Sys_IcePoint_Load ? ' <span class="text-xs text-amber-300">（低於此值會自動開磁浮 CHU-2：已致能）</span>' : ' <span class="text-xs text-slate-400">（自動開磁浮：未致能）</span>') : '')); rtSet('rt-bcut', `${fmt(a.bcu_chws_c, 1)}／${fmt(a.bcu_chwr_c, 1)}`);
+                rtSet('rt-tank', `${fmt(a.tank_out_c, 1)}／${fmt(a.tank_in_c, 1)}`); rtSet('rt-icesp', fmt(a.ice_low_sp, 0) + ' %' + (a.plant && a.plant.SGB1DC51_CHU2_Sys_IcePoint_Load != null ? (a.plant.SGB1DC51_CHU2_Sys_IcePoint_Load ? ' <span class="text-xs text-amber-300">（低於此值自動開磁浮 CHU-2：Enable）</span>' : ' <span class="text-xs text-slate-400">（低於此值自動開磁浮 CHU-2：Disable）</span>') : '')); rtSet('rt-bcut', `${fmt(a.bcu_chws_c, 1)}／${fmt(a.bcu_chwr_c, 1)}`);
                 rtSet('rt-flow', fmt(a.flow_m3h, 1)); rtSet('rt-flowtot', fmt(a.flow_tot_m3, 0));
                 const age = a.time ? (Date.now() - new Date(a.time.replace(' ', 'T') + '+08:00')) / 60000 : null;
                 rtSet('rt-acnote', !a.viewer_ok ? '<span class="text-amber-300">空調監控主機的 WindowViewer 沒開，讀不到最新值</span>' : age != null && age > 5 ? `<span class="text-amber-300">空調資料 ${Math.round(age)} 分鐘沒更新</span>` : `<span class="text-slate-500">空調資料時間 ${a.time.slice(11, 16)}</span>`);
