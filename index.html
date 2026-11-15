@@ -911,10 +911,17 @@
             const v2 = dt >= new Date('2026-11-09T00:00:00+08:00');
             return hm < 570 ? (v2 ? '75%' : '90%') + '（09:30 前）' : hm < 660 ? '65%（09:30–11:00）' : hm < 840 ? (v2 ? '70%' : '80%') + '（11:00–14:00）' : hm < 960 ? '60%（14:00–16:00）' : hm < 1020 ? '40%（16:00–17:00）' : '30%（17:00–18:00）';
         }
+        // 用電特殊事件日（測試、活動等），不列入節電成效。完整紀錄：ctic-ems/節電成效/用電特殊事件紀錄.md
+        const SPECIAL_DAYS = {
+            '2026-11-16': '今天是儲冰／融冰實測日（凌晨 00:04–06:56 製冰、07:20 起融冰），總表多用主要是測試造成，今天不列入節電成效。'
+        };
+        function ymdLocal(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
         function savRow(label, x) {
             if (!x) return '';
             const c = x.saved >= 0 ? 'text-emerald-400' : 'text-red-400';
-            return `<div class="py-2 border-b border-slate-700/50"><div class="flex justify-between"><span class="text-slate-300">${label}</span><span class="font-mono ${c}">${x.saved >= 0 ? '省 ' : '多用 '}${fmt(Math.abs(x.saved), 0)} kWh（${x.pct == null ? '—' : fmt(Math.abs(x.pct), 1) + '%'}）</span></div>
+            // 基準量太小（不到全天平均的 10%，例如清晨）時百分比會爆大，改顯示「—」；省／多用不到 1 kWh 也不顯示百分比（2026-11-16）
+            const pctOk = x.pct != null && x.base >= (x.base_day || 0) * 0.1 && Math.abs(x.saved) >= 1;
+            return `<div class="py-2 border-b border-slate-700/50"><div class="flex justify-between"><span class="text-slate-300">${label}</span><span class="font-mono ${c}">${x.saved >= 0 ? '省 ' : '多用 '}${fmt(Math.abs(x.saved), 0)} kWh（${pctOk ? fmt(Math.abs(x.pct), 1) + '%' : '—'}）</span></div>
                 <div class="text-xs text-slate-400 font-mono">今天到 ${x.upto}：${fmt(x.kwh, 0)} kWh・過去同時段平均 ${fmt(x.base, 0)} kWh・全天平均 ${fmt(x.base_day, 0)}</div></div>`;
         }
         function updateSavings(d) {
@@ -937,7 +944,8 @@
             }
             if (!s) { rtSet('rt-sav', '<span class="text-slate-400">沒有基準資料（data/savings_baseline.json）</span>'); rtSet('rt-sav-note', ''); }
             else {
-                rtSet('rt-sav', savRow('磁浮主機 EACMP-1', s.mag) + savRow('園區總表', s.main));
+                const sp = SPECIAL_DAYS[ymdLocal(new Date())];
+                rtSet('rt-sav', (sp ? `<div class="mb-2 p-2 rounded bg-amber-500/15 text-amber-300 text-sm">⚠️ ${sp}</div>` : '') + savRow('磁浮主機 EACMP-1', s.mag) + savRow('園區總表', s.main));
                 const w = s.weather;
                 const wx = !w ? '' : w.outside
                     ? `<span class="block mt-1 text-amber-300">⚠️ 今天外氣平均 ${fmt(w.oat_c, 1)}°C，比基準日（${fmt(w.base_min_c, 1)}–${fmt(w.base_max_c, 1)}°C）${w.diff_c < 0 ? '涼' : '熱'} ${fmt(Math.abs(w.diff_c), 1)}°C，天氣差異大，節電量僅供參考。</span>`
