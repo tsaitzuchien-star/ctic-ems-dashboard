@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-15-ice-tags-install",
+  "id": "2026-11-15-savings-hist-linepush",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-15T07:25:09+08:00",
-  "expires": "2026-11-15T15:25:09+08:00",
-  "note": "PR #58 加讀儲冰／融冰查核點位（只讀；Cliff 合併並回執行）：空調監控主機 ac_logger.ps1",
-  "sha": "ee319162068497262816e71f86262aae2de59a2f",
+  "approved_at": "2026-11-15T08:40:31+08:00",
+  "expires": "2026-11-15T16:40:31+08:00",
+  "note": "PR #59 每日摘要節電成效改用歷史人工基準（Cliff 好、執行）：監控電腦 line_push.py",
+  "sha": "e8ad104918d9db36d836678ff44b62e72579474c",
   "files": [
-    { "pc": "ac", "file": "tools/ac_logger.ps1" }
+    { "pc": "bms", "file": "tools/line_push.py" }
   ]
 }
