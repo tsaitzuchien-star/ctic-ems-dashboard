@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-15-savings-hist-linepush",
+  "id": "2026-11-16-x1-pr60-index",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-15T08:40:31+08:00",
-  "expires": "2026-11-15T16:40:31+08:00",
-  "note": "PR #59 每日摘要節電成效改用歷史人工基準（Cliff 好、執行）：監控電腦 line_push.py",
-  "sha": "e8ad104918d9db36d836678ff44b62e72579474c",
+  "approved_at": "2026-11-16T00:13:54+08:00",
+  "expires": "2026-11-16T08:13:54+08:00",
+  "note": "PR #60 空調系統圖 BCU-1 標題不再與「製冰中」重疊（Cliff 執行）：監控電腦 index.html",
+  "sha": "0c89b378a2b3752c488628b14a46715b2b33b18c",
   "files": [
-    { "pc": "bms", "file": "tools/line_push.py" }
+    { "pc": "bms", "file": "index.html" }
   ]
 }
