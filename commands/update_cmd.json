@@ -1,10 +1,10 @@
 {
-  "id": "2026-11-16-pr62-oat-fix",
+  "id": "2026-11-16-pr62-63",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-16T00:35:16+08:00",
+  "approved_at": "2026-11-16T00:37:27+08:00",
   "expires": "2026-11-16T06:15:00+08:00",
-  "note": "PR #62（Cliff 好執行）：修正外氣溫度沒寫入 ac_latest；冰水系統圖表標示 12 小時；冰桶低限顯示自動開磁浮致能",
-  "sha": "1ea494e435029528ddac3007f1db524c4f48c7f1",
+  "note": "PR #62＋#63（Cliff 好執行）：外氣溫度寫入修正、冰水系統圖表 12 小時、冰桶低限自動開磁浮 Enable/Disable",
+  "sha": "0080b542b685431e41e3df209a2609fa6ab75211",
   "files": [
     { "pc": "ac", "file": "tools/ac_logger.ps1" },
     { "pc": "bms", "file": "index.html" }
