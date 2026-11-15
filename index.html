@@ -647,7 +647,7 @@
             s += sysBox('CHU1', 500, 190, 230, 80, 'CHU-1 離心', icChiller(510, 214, false), sysTxt('sbt-CHU1', 576, 244) + `<text x="576" y="262" class="sys-dim">500 RT・長期未使用</text>`);
             s += sysBox('CHU2', 500, 292, 230, 92, 'CHU-2 磁浮', icChiller(510, 318, true), sysTxt('sbt-CHU2', 576, 343) + sysTxt('sbl-CHU2', 576, 361) + sysTxt('sbc-CHU2', 576, 377, 'sys-dim'));
             s += sysBox('HEX2', 500, 404, 230, 80, 'HEX-2 融冰板熱', icHex(510, 424), sysTxt('sbt-HEX2', 576, 450, 'sys-dim') + sysTxt('sbv-HEX2', 576, 470, 'sys-dim'));
-            s += sysBox('BCU', 500, 552, 230, 80, 'BCU-1 製冰主機', icChiller(510, 576, false), sysTxt('sbt-BCU', 576, 598) + sysTxt('sbk-BCU', 576, 618, 'sys-dim'));
+            s += sysBox('BCU', 500, 552, 230, 80, 'BCU-1 製冰', icChiller(510, 576, false), sysTxt('sbt-BCU', 576, 598) + sysTxt('sbk-BCU', 576, 618, 'sys-dim'));
             s += `<g><rect x="500" y="660" width="150" height="64" rx="12" class="sys-panel"/><text x="514" y="684" class="sys-ttl">箱型機・CRAC</text><text x="514" y="704" class="sys-dim">PK2B1/2、B1F/2F 機房</text><text x="514" y="718" class="sys-dim">CWP7/8 供冷卻水</text></g>`;
             s += `<g id="sb-ICE" class="sys-box sys-unk"><rect x="760" y="640" width="200" height="146" rx="12" class="sys-panel"/><text x="774" y="662" class="sys-ttl">儲冰槽</text><circle cx="946" cy="657" r="5" class="sys-led"/><text id="sbs-ICE" x="936" y="661" text-anchor="end" class="sys-st"></text>
                 ${sysTank(1, 778, 676)}${sysTank(2, 870, 676)}</g>`;
