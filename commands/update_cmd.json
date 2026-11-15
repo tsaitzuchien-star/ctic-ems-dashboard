@@ -1,10 +1,10 @@
 {
-  "id": "2026-11-16-x1-pr60-index",
+  "id": "2026-11-16-x1-pr61-index",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-16T00:13:54+08:00",
-  "expires": "2026-11-16T08:13:54+08:00",
-  "note": "PR #60 空調系統圖 BCU-1 標題不再與「製冰中」重疊（Cliff 執行）：監控電腦 index.html",
-  "sha": "0c89b378a2b3752c488628b14a46715b2b33b18c",
+  "approved_at": "2026-11-16T00:21:37+08:00",
+  "expires": "2026-11-16T08:21:37+08:00",
+  "note": "PR #61 空調系統圖 BCU-1 功率改用迴路電表 15 分鐘平均（Cliff 好、執行）：監控電腦 index.html",
+  "sha": "06b5189e8d126e6f2a544b5a3058c721cd09e8a3",
   "files": [
     { "pc": "bms", "file": "index.html" }
   ]
