@@ -763,7 +763,9 @@
             const bcu = sysNum(pl.SGB1DC51_BCU_TR11) ? 'trip' : (a.bcu_st != null ? (a.bcu_st > 0 ? 'run' : 'off') : 'unk');
             sysSetCls(document.getElementById('sb-BCU'), bcu); rtSet('sbs-BCU', bcu === 'run' ? '製冰中' : SYS_STXT[bcu]);
             rtSet('sbt-BCU', `滷水 ${f1(a.bcu_chws_c)} → ${f1(a.bcu_chwr_c)} °C`);
-            rtSet('sbk-BCU', `${f0(a.bcu_kw)} kW・冷卻水 ${f1(T(3))} / ${f1(T(4))} °C`);
+            // BCU-1 功率：InTouch 瞬時點 CH2_SH_ACMP_B_BCU1_KW 製冰時也只讀 ~1 kW（不可信），改用迴路電表最近 15 分鐘平均
+            const bcuKw15 = ((typeof liveData !== 'undefined' && liveData && liveData.plant_now) || {})['滷水主機 BCU-1（儲冰）'];
+            rtSet('sbk-BCU', `${f0(bcuKw15 ?? a.bcu_kw)} kW・冷卻水 ${f1(T(3))}/${f1(T(4))}`);
             const hex2 = (on.CHP5 || on.CHP6) ? 'run' : (noPlant ? 'unk' : 'off');
             sysSetCls(document.getElementById('sb-HEX2'), hex2); rtSet('sbs-HEX2', hex2 === 'run' ? '融冰中' : SYS_STXT[hex2]);
             rtSet('sbt-HEX2', `${f1(pl.SGB1DC51_Hex02_T01)}→${f1(pl.SGB1DC51_Hex02_T02)} / ${f1(pl.SGB1DC51_Hex02_T03)}→${f1(pl.SGB1DC51_Hex02_T04)}`);
