@@ -1,9 +1,9 @@
 {
-  "id": "2026-11-16-pr67-ice",
+  "id": "2026-11-16-pr68-ct20",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-16T13:27:00+08:00",
-  "expires": "2026-11-16T21:27:00+08:00",
-  "note": "PR #67（Cliff 執行）：網站冰桶液位不列入故障的液位計 01，顯示「故障」",
-  "sha": "10d4986af31559ccc8ce9c3732c19ec237dca738",
-  "files": [{"pc": "bms", "file": "index.html"}]
+  "approved_at": "2026-11-16T14:37:00+08:00",
+  "expires": "2026-11-16T22:37:00+08:00",
+  "note": "PR #68（Cliff 執行）：信箱水塔設定下限 24 → 20 °C（原廠：冬季冷卻水 19–23 °C 可、16 °C 以下跳喘振）",
+  "sha": "5ed5b397620f07602c72768ec3e026484a0236ac",
+  "files": [{"pc": "ac", "file": "tools/sched_cmd.ps1"}]
 }
