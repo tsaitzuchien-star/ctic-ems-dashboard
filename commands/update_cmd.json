@@ -1,9 +1,9 @@
 {
-  "id": "2026-11-16-pr64-index",
+  "id": "2026-11-16-pr65-zones",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-16T07:49:00+08:00",
-  "expires": "2026-11-16T15:49:00+08:00",
-  "note": "PR #64（Cliff 執行）：節電成效卡清晨不顯示失真百分比、標註 11/16 儲冰實測日",
-  "sha": "55ae8bf4ed4697798a918b9f9743c2b6ef323039",
-  "files": [{"pc": "bms", "file": "index.html"}]
+  "approved_at": "2026-11-16T11:36:00+08:00",
+  "expires": "2026-11-16T19:36:00+08:00",
+  "note": "PR #65（Cliff 執行）：各樓層冰水供回水溫度（ac_logger 加讀 124 個分區 BTU 點，只讀）＋網站對照表",
+  "sha": "e6420c5c2468932e85e8581da524bf790598f69e",
+  "files": [{"pc": "ac", "file": "tools/ac_logger.ps1"}, {"pc": "bms", "file": "index.html"}]
 }
