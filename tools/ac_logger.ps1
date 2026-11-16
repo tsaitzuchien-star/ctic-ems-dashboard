@@ -112,6 +112,12 @@ foreach ($b in 'PAH_131_BTU01','AHU121_122_BTU01','PAH121_122_BTU01','PAH_111_BT
                'PAH_221_BTU01','FCU_2FB_BTU01','PAH_222_BTU01','FCU_2FB_BTU02','PAH_231_BTU01','FCU_3FB_BTU01','PAH_232_BTU01','FCU_3FB_BTU02',
                'PAH_241_BTU01','FCU_4FB_BTU01','PAH_242_BTU01','FCU_4FB_BTU02') {
   $plantTags.Add("$($b)_Flow"); $plantTags.Add("$($b)_HeatFlow")
+  $plantTags.Add("$($b)_T_Out"); $plantTags.Add("$($b)_T_In")   # 供水／回水溫度（2026-11-16，查 4 樓冷氣不冷）
+}
+# 各樓層分區冰水 BTU（2026-11-16，Cliff：4 樓去年反映出風溫度 25–26 °C）：進水溫度、回水溫度、即時流量，只讀。
+# SG2F11BTU_01_01–09 = A 棟 1–3F；SG2F21BTU_01_01–07 = B 棟 1–2F；SG2F22BTU_02_01–04 = B 棟 4F、_05–06 = B 棟 3F
+foreach ($z in @(1..9 | ForEach-Object { 'SG2F11BTU_01_{0:00}' -f $_ }) + @(1..7 | ForEach-Object { 'SG2F21BTU_01_{0:00}' -f $_ }) + @(1..6 | ForEach-Object { 'SG2F22BTU_02_{0:00}' -f $_ })) {
+  $plantTags.Add("$($z)_Out_Temp"); $plantTags.Add("$($z)_Return_Temp"); $plantTags.Add("$($z)_Flow")
 }
 foreach ($t in 'SG_CHU2_Item30017','SG_CHU2_Item30019','SG_CHU2_Item30007','CHSYS_FLOW_TOT','CHSYS_B1F_BTU11_Heat_Acc','CHSYS_B1F_BTU12_Heat_Acc') { $plantTags.Add($t) }
 $plantTags = [string[]]$plantTags.ToArray()
