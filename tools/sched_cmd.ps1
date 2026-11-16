@@ -553,13 +553,15 @@ foreach ($c in $changes) {
   if ($DryRun) { $res.lines += "$label：$(Fmt $before) → $($c.on)–$($c.off)$(if ([int]$c.en -eq 1) {'（有勾）'} else {'（沒勾）'})（試跑，沒寫）"; continue }
   if (Same $before $want) { $res.lines += "$label：已經是 $(Fmt $before)，不用改"; continue }
   for ($i = 0; $i -lt 5; $i++) { $null = [CticDdeW]::Poke($tags[$i], $want[$i]) }
-  Start-Sleep -Seconds 3
-  $after = [CticDdeW]::Read($tags, 3000, 20000)
+  # 2026-11-16：InTouch 有時 3 秒後才生效（讀回還是舊值，還原時新值才出現），改成最多等 20 秒、每 4 秒讀一次，確定沒寫進去才還原
+  $after = $null
+  for ($k = 0; $k -lt 5; $k++) { Start-Sleep -Seconds 4; $after = [CticDdeW]::Read($tags, 3000, 20000); if (Same $after $want) { break } }
   if (Same $after $want) { $res.lines += "$label：$(Fmt $before) → $(Fmt $after) ✅" }
   else {
     $allOk = $false
     if ($null -ne $before) { for ($i = 0; $i -lt 5; $i++) { $null = [CticDdeW]::Poke($tags[$i], "$($before[$i])") } }
     Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 6
     $back = [CticDdeW]::Read($tags, 3000, 20000)
     $res.lines += "$label：寫入後讀回 $(Fmt $after) 和指令不符，已還原成 $(Fmt $back) ❌"
   }
