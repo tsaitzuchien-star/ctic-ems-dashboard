@@ -38,7 +38,7 @@
 #   （用 PrintWindow，被其他視窗擋住也截得到 InTouch 目前顯示的那一頁）。只保留最近 30 張。
 #   監控電腦 circuit_export 會把 shots 複製到 Google 雲端 BMS自動匯出\shots。螢幕鎖定時整個螢幕那張可能是黑的。
 # 冷卻水塔設定溫度（2026-11-16 起，空調同仁經 Cliff 授權，給待測項目用）：kind = ct，只寫 SGB1DC51_CT<n>_PID_SP。
-#   {"kind":"ct","tower":3,"sp":24}     tower 只能 1、2、3；sp 只允許 24–35 °C（磁浮最低冷卻水溫確認前，下限先 24）。
+#   {"kind":"ct","tower":3,"sp":25}     tower 只能 1、2、3；sp 只允許 25–35 °C（2026-11-16 堃霖原廠：磁浮冷卻水最低 25 °C）。
 #   寫入前讀現值、寫入 3 秒後讀回核對，結果附「原本幾度」，測完照原值送回去。不碰風扇啟停、變頻手動輸出、PID 參數。
 # 停用：在 C:\BMS_Export 放 sched_cmd_off.txt。
 # 結果：C:\BMS_Export\sched_cmd_result.json（監控電腦讀到後推 LINE）與 sched_cmd.log。
@@ -67,7 +67,7 @@ function Event-Lines { if (Test-Path $EventFile) { return @(Get-Content $EventFi
 $PREFIX = @{ ice = 'BCU_SCHI'; melt = 'BCU_SCHW'; chu2 = 'CHU2_SCH' }
 $NAME = @{ ice = '製冰'; melt = '融冰'; chu2 = '磁浮' }
 $WD = '一二三四五六日'
-$CT_SP_MIN = 24.0; $CT_SP_MAX = 35.0   # 冷卻水塔設定溫度範圍（°C）
+$CT_SP_MIN = 25.0; $CT_SP_MAX = 35.0   # 冷卻水塔設定溫度範圍（°C）
 $ICE_OK_FROM = '22:00'; $ICE_OK_TO = '07:30'
 $FCU_ALLOW = @{ 'B239' = 'SG_2F31_P25'; 'C303' = 'SG_3F31' }     # 房號 → InTouch 點位前綴（Cliff 授權的房間才放進來）
 $FCU_UNITS = @{                                                     # 房號 → 可以動的台號（前綴 + '_' + 台號 = 點位）
