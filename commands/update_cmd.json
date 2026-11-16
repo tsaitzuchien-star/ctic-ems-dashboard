@@ -1,9 +1,9 @@
 {
-  "id": "2026-11-16-pr65-zones",
+  "id": "2026-11-16-pr66-ct",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-16T11:36:00+08:00",
-  "expires": "2026-11-16T19:36:00+08:00",
-  "note": "PR #65（Cliff 執行）：各樓層冰水供回水溫度（ac_logger 加讀 124 個分區 BTU 點，只讀）＋網站對照表",
-  "sha": "e6420c5c2468932e85e8581da524bf790598f69e",
-  "files": [{"pc": "ac", "file": "tools/ac_logger.ps1"}, {"pc": "bms", "file": "index.html"}]
+  "approved_at": "2026-11-16T12:14:00+08:00",
+  "expires": "2026-11-16T20:14:00+08:00",
+  "note": "PR #66（Cliff 執行）：信箱加冷卻水塔設定溫度（CT1–3，24–35 °C）、排程讀回最多等 20 秒；ac_logger 記錄水塔設定；網站冰水分區表排除異常讀值",
+  "sha": "ed4ae8411f23978c4acb3e53acd451f8c0f21e22",
+  "files": [{"pc": "ac", "file": "tools/sched_cmd.ps1"}, {"pc": "ac", "file": "tools/ac_logger.ps1"}, {"pc": "bms", "file": "index.html"}]
 }
