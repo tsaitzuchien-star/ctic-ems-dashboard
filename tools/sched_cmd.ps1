@@ -37,6 +37,9 @@
 #   存到 C:\BMS_Export\shots：整個螢幕 shot_<時間>_screen.png，與 InTouch WindowViewer 視窗本身 shot_<時間>_intouch.png
 #   （用 PrintWindow，被其他視窗擋住也截得到 InTouch 目前顯示的那一頁）。只保留最近 30 張。
 #   監控電腦 circuit_export 會把 shots 複製到 Google 雲端 BMS自動匯出\shots。螢幕鎖定時整個螢幕那張可能是黑的。
+# 冷卻水塔設定溫度（2026-11-16 起，空調同仁經 Cliff 授權，給待測項目用）：kind = ct，只寫 SGB1DC51_CT<n>_PID_SP。
+#   {"kind":"ct","tower":3,"sp":24}     tower 只能 1、2、3；sp 只允許 24–35 °C（磁浮最低冷卻水溫確認前，下限先 24）。
+#   寫入前讀現值、寫入 3 秒後讀回核對，結果附「原本幾度」，測完照原值送回去。不碰風扇啟停、變頻手動輸出、PID 參數。
 # 停用：在 C:\BMS_Export 放 sched_cmd_off.txt。
 # 結果：C:\BMS_Export\sched_cmd_result.json（監控電腦讀到後推 LINE）與 sched_cmd.log。
 # 測試：powershell -ExecutionPolicy Bypass -File C:\BMS_Export\sched_cmd.ps1 -File 某指令.json -DryRun   （只檢查、不寫）
@@ -64,6 +67,7 @@ function Event-Lines { if (Test-Path $EventFile) { return @(Get-Content $EventFi
 $PREFIX = @{ ice = 'BCU_SCHI'; melt = 'BCU_SCHW'; chu2 = 'CHU2_SCH' }
 $NAME = @{ ice = '製冰'; melt = '融冰'; chu2 = '磁浮' }
 $WD = '一二三四五六日'
+$CT_SP_MIN = 24.0; $CT_SP_MAX = 35.0   # 冷卻水塔設定溫度範圍（°C）
 $ICE_OK_FROM = '22:00'; $ICE_OK_TO = '07:30'
 $FCU_ALLOW = @{ 'B239' = 'SG_2F31_P25'; 'C303' = 'SG_3F31' }     # 房號 → InTouch 點位前綴（Cliff 授權的房間才放進來）
 $FCU_UNITS = @{                                                     # 房號 → 可以動的台號（前綴 + '_' + 台號 = 點位）
@@ -226,6 +230,13 @@ public static class CticShot {
 function Check-Change($c, $now) {
   # 回傳 $null = 通過；否則回傳擋下的原因
   if ("$($c.kind)" -eq 'screenshot') { return $null }
+  if ("$($c.kind)" -eq 'ct') {
+    if (@('1','2','3') -notcontains "$($c.tower)") { return "冷卻水塔 $($c.tower) 不對（只能 1、2、3）" }
+    $v = 0.0
+    if (-not [double]::TryParse("$($c.sp)", [Globalization.NumberStyles]::Float, $inv, [ref]$v) -or $v -lt $CT_SP_MIN -or $v -gt $CT_SP_MAX) {
+      return "冷卻水塔 CT$($c.tower) 設定溫度 $($c.sp) 超出 $CT_SP_MIN–$CT_SP_MAX °C" }
+    return $null
+  }
   if ("$($c.kind)" -eq 'hist') {
     if (-not $HIST_SETS.ContainsKey("$($c.set)")) { return "點位組 $($c.set) 不在白名單（只能 $($HIST_SETS.Keys -join ', ')）" }
     $a = [datetime]::MinValue; $b = [datetime]::MinValue
@@ -280,7 +291,7 @@ function Check-Change($c, $now) {
     if ($null -eq $cs) { return "照明迴路不對（要 all 或 $($LIGHT_CIRCUITS -join ',') 其中幾個）" }
     return $null
   }
-  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit / event / hist / screenshot）" }
+  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit / event / hist / screenshot / ct）" }
   $d = 0; if (-not [int]::TryParse("$($c.day)", [ref]$d) -or $d -lt 1 -or $d -gt 7) { return "星期 $($c.day) 不對（1–7）" }
   if (-not (Hm-Ok $c.on) -or -not (Hm-Ok $c.off)) { return "時間格式不對（$($c.on)–$($c.off)，要 HH:MM）" }
   if ("$($c.en)" -ne '0' -and "$($c.en)" -ne '1') { return "勾選 en 只能 0 或 1" }
@@ -395,7 +406,7 @@ if (($exp - $apv).TotalHours -gt 24) { $res.status = 'rejected'; $res.lines = @(
 $changes = @($cmd.changes)
 if ($changes.Count -lt 1 -or $changes.Count -gt 21) { $res.status = 'rejected'; $res.lines = @('沒有要改的項目，或一次超過 21 筆'); Save-Result $res; exit 0 }
 $why = @()
-foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } elseif ("$($c.kind)" -eq 'event') { "活動登記 $e" } elseif ("$($c.kind)" -eq 'hist') { "匯出歷史 $e" } elseif ("$($c.kind)" -eq 'screenshot') { "截圖 $e" } else { "$(Day-Label $c.day) $e" }) } }
+foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } elseif ("$($c.kind)" -eq 'event') { "活動登記 $e" } elseif ("$($c.kind)" -eq 'hist') { "匯出歷史 $e" } elseif ("$($c.kind)" -eq 'screenshot') { "截圖 $e" } elseif ("$($c.kind)" -eq 'ct') { "冷卻水塔 $e" } else { "$(Day-Label $c.day) $e" }) } }
 if ($why.Count) { $res.status = 'rejected'; $res.lines = @('整筆指令沒有執行：') + $why; Save-Result $res; exit 0 }
 
 # ---- 寫入（WindowViewer 要開著） ----
@@ -407,6 +418,17 @@ foreach ($c in $changes) {
   if ("$($c.kind)" -eq 'screenshot') {
     if ($DryRun) { $res.lines += '截圖：會存整個螢幕與 InTouch 視窗各一張（試跑，沒截）'; continue }
     try { $res.lines += @(Take-Shots) } catch { $allOk = $false; $res.lines += "截圖失敗：$($_.Exception.Message) ❌" }
+    continue
+  }
+  if ("$($c.kind)" -eq 'ct') {
+    $tag = "SGB1DC51_CT$($c.tower)_PID_SP"; $val = [double]"$($c.sp)"; $label = "冷卻水塔 CT$($c.tower) 設定溫度"
+    $b = [CticDdeW]::Read([string[]]@($tag), 3000, 10000); $bv = $(if ($null -ne $b) { "$($b[0])" } else { '?' })
+    if ($DryRun) { $res.lines += "${label}：目前 $bv°C → $val°C（試跑，沒寫）"; continue }
+    $null = [CticDdeW]::Poke($tag, $val.ToString($inv)); Start-Sleep -Seconds 3
+    $a = [CticDdeW]::Read([string[]]@($tag), 3000, 10000); $av = 0.0
+    if ($null -ne $a -and [double]::TryParse("$($a[0])", [Globalization.NumberStyles]::Float, $inv, [ref]$av) -and [math]::Abs($av - $val) -lt 0.05) {
+      $res.lines += "${label}：$bv → $av°C ✅（原本 $bv°C，測完要改回）" }
+    else { $allOk = $false; $res.lines += "${label}：寫入 $val°C 後讀回 $(if ($null -ne $a) { $a[0] } else { '讀不到' })，不一致 ❌（原本 $bv°C）" }
     continue
   }
   if ("$($c.kind)" -eq 'hist') {
