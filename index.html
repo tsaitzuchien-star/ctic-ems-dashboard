@@ -939,13 +939,22 @@
         function updateZones(a) {
             const pl = a.plant || {};
             if (pl.SG2F22BTU_02_01_Out_Temp === undefined) { rtSet('rt-zonenote', '還沒有分區溫度資料（空調監控主機的 ac_logger 要更新到 2026-11-16 版）'); rtSet('rt-zones', ''); return; }
-            const ref = a.chu2_st ? a.mag_chws_c : null;
+            // 基準改用「各區正常供水的中位數」：11/16 實測各區熱量計比磁浮出水溫度計低約 2 °C（兩邊感測器有偏差），直接比磁浮出水會失真
+            const okv = v => v != null && v >= 3 && v <= 35;
+            const sups = ZONES.map(z => [pl[z.p + z.s], pl[z.p + z.r]]).filter(([x, y]) => okv(x) && okv(y)).map(([x, y]) => Math.min(x, y)).filter(v => v < 20).sort((x, y) => x - y);
+            const ref = a.chu2_st && sups.length >= 3 ? sups[Math.floor(sups.length / 2)] : null;
             rtSet('rt-zonenote', ref != null
-                ? `比較基準：磁浮出水 ${fmt(ref, 1)} °C。供水比基準高 2 °C 以上標紅（水在半路變熱、混到回水），高 1–2 °C 標黃；流量 0 可能是那區沒用冷氣或熱量計故障。`
+                ? `比較基準：各區供水溫度的中位數 ${fmt(ref, 1)} °C（磁浮出水溫度計 ${fmt(a.mag_chws_c, 1)} °C，兩邊感測器有偏差，所以用各區互相比）。供水比基準高 2 °C 以上標紅（水在半路變熱、混到回水），高 1–2 °C 標黃；流量 0 可能是那區沒用冷氣或熱量計故障。讀值 0 或超出 3–35 °C 的表顯示為灰色，不列入比較。`
                 : '磁浮沒有運轉（或正在融冰），先不做供水溫度比較；流量 0 可能是那區沒用冷氣或熱量計故障。');
             rtSet('rt-zones', ZONES.map(z => {
-                const sv = pl[z.p + z.s], rv = pl[z.p + z.r], fv = pl[z.p + '_Flow'];
+                // 2026-11-16 第一批實測：很多表讀 0（離線），有的讀到 37、68、114 °C（故障），送風機／空調箱熱量計的「供水／回水」標籤看起來相反
+                // → 只採 3–35 °C 的值；兩個都合理時，低的當供水、高的當回水
+                const ok = v => v != null && v >= 3 && v <= 35, t1 = pl[z.p + z.s], t2 = pl[z.p + z.r], fv = pl[z.p + '_Flow'];
+                const bad = !ok(t1) || !ok(t2);
+                const sv = bad ? null : Math.min(t1, t2), rv = bad ? null : Math.max(t1, t2);
+                if (!bad && sv >= 20) return `<tr class="border-b border-slate-700/40 text-slate-500"><td class="py-1">${z.fl}</td><td class="py-1">${z.name}</td><td class="py-1 text-right font-mono" colspan="3">${fmt(sv, 1)}／${fmt(rv, 1)}（接近室溫，設備沒開或沒有冰水流過）</td><td class="py-1 text-right font-mono">${fmt(fv, 1)}</td></tr>`;
                 const dt = sv != null && rv != null ? rv - sv : null, hi = ref != null && sv != null ? sv - ref : null;
+                if (bad) return `<tr class="border-b border-slate-700/40 text-slate-500"><td class="py-1">${z.fl}</td><td class="py-1">${z.name}</td><td class="py-1 text-right font-mono" colspan="3">${(t1 || 0) === 0 && (t2 || 0) === 0 ? '讀值 0（離線或沒裝）' : `讀值異常（${fmt(t1, 1)}／${fmt(t2, 1)}）`}</td><td class="py-1 text-right font-mono">${fmt(fv, 1)}</td></tr>`;
                 const sc = hi == null ? 'text-white' : hi >= 2 ? 'text-red-400 font-bold' : hi >= 1 ? 'text-amber-300' : 'text-emerald-400';
                 return `<tr class="border-b border-slate-700/40"><td class="py-1 text-slate-300">${z.fl}</td><td class="py-1 text-slate-300">${z.name}</td><td class="py-1 text-right font-mono ${sc}">${fmt(sv, 1)}</td><td class="py-1 text-right font-mono text-white">${fmt(rv, 1)}</td><td class="py-1 text-right font-mono text-white">${fmt(dt, 1)}</td><td class="py-1 text-right font-mono ${fv ? 'text-white' : 'text-slate-500'}">${fmt(fv, 1)}</td></tr>`;
             }).join(''));
