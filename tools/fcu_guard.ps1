@@ -16,6 +16,9 @@ $AFTER_START = '18:00'; $AFTER_END = '07:00'
 $MAX_WRITES = 150
 # 下班第二次開機（Cliff 2026-11-06 16:51）：關過又被打開 → 不再關，默默把設定調到 28°C；隔天 07:00 後調回 25°C
 $WARM_SET = 28.0; $RESTORE_SET = 25.0; $RESTORE_FROM = '07:00'; $RESTORE_UNTIL = '18:00'
+# 深夜補關（Cliff 2026-11-17 06:34）：22:00 前維持「重開只調 28°C」；22:00 以後每 2 小時（22:00、00:00、02:00、04:00）
+# 把仍在運轉、又不在名單／活動／警衛室／公共區時段的送風機再關一次（含重開過的），以防最後離開的人沒關。
+$SWEEP_AT = @('22:00', '00:00', '02:00', '04:00')
 $mode = $(if ($Live) { 'LIVE' } else { 'DRY' })
 $now = Get-Date
 $mtx = New-Object System.Threading.Mutex($false, 'Global\CTIC_Fcu_Guard')
@@ -123,7 +126,7 @@ function Event-Now($t) {
   }
   [pscustomobject]@{ panels = @($pan | Select-Object -Unique); text = ($txt -join '；') }
 }
-$status = [ordered]@{ time = $now.ToString('yyyy-MM-dd HH:mm:ss'); mode = $mode; event = ''; units = 0; running = 0; setT_fix = 0; after_off = 0; warm28 = 0; restored = 0; after_rule = ''; note = ''; actions = @() }
+$status = [ordered]@{ time = $now.ToString('yyyy-MM-dd HH:mm:ss'); mode = $mode; event = ''; units = 0; running = 0; setT_fix = 0; after_off = 0; warm28 = 0; restored = 0; sweep = ''; after_rule = ''; note = ''; actions = @() }
 function Save-Status { $status | ConvertTo-Json -Depth 4 | Out-File (Join-Path $Out 'fcu_guard_status.json') -Encoding utf8 }
 if (Test-Path (Join-Path $Out 'fcu_guard_off.txt')) { $status.note = 'off-switch'; Save-Status; exit 0 }
 
@@ -194,7 +197,18 @@ if ($state) {
 }
 $stNight = $(if ($state) { "$($state.night)" } else { '' })
 if ($stNight -ne $night) { $offSet = @{} }   # 新的一晚：關機名單重來（調高名單留到白天還原）
-function Save-State { if ($Live) { [ordered]@{ night = $night; off = @($offSet.Keys); raised = $raised } | ConvertTo-Json -Depth 3 | Out-File $stf -Encoding utf8 } }
+$lastSweep = $(if ($state -and $stNight -eq $night) { "$($state.sweep)" } else { '' })
+$sweepSlot = $null
+if ($after -and ($hm -ge '22:00' -or $hm -lt $AFTER_END)) {
+  foreach ($t in $SWEEP_AT) {   # 依夜間順序，取今晚已經到的最後一個時間點
+    $passed = $(if ($t -ge '22:00') { $hm -ge $t -or $hm -lt $AFTER_END } else { $hm -lt $AFTER_END -and $hm -ge $t })
+    if ($passed) { $sweepSlot = $t }
+  }
+}
+$doSweep = [bool]$sweepSlot -and ($lastSweep -ne "$night $sweepSlot")
+if ($doSweep) { $lastSweep = "$night $sweepSlot" }
+$status.sweep = $(if ($doSweep) { "補關 $sweepSlot" } else { '' })
+function Save-State { if ($Live) { [ordered]@{ night = $night; off = @($offSet.Keys); raised = $raised; sweep = $lastSweep } | ConvertTo-Json -Depth 3 | Out-File $stf -Encoding utf8 } }
 
 $logf = Join-Path $Out ('fcu_guard_{0:yyyy-MM-dd}.csv' -f $now)
 if (-not (Test-Path $logf)) { 'time,mode,unit,rooms,action,before,ok' | Out-File $logf -Encoding utf8 }
@@ -205,20 +219,20 @@ for ($i = 0; $i -lt $units.Count; $i++) {
   $status.running++
   $act = $null; $tag = $null; $val = $null; $before = $null
   if ($after -and -not (Allowed $u)) {
-    if ($offSet.ContainsKey($u) -or $raised.ContainsKey($u)) {
+    if (-not $doSweep -and ($offSet.ContainsKey($u) -or $raised.ContainsKey($u))) {
       # 關過又被打開：不再關，設定調到 28°C（已經 ≥ 28 就不動）
       if ($null -ne $st -and $st -gt 5 -and $st -lt $WARM_SET - 0.05) {
         $act = 'warm28'; $tag = "$($u)_setT"; $val = $WARM_SET.ToString($inv); $before = "setT=$st"
         if (-not $raised.ContainsKey($u)) { $raised[$u] = $st }
       }
-    } else { $act = 'off'; $tag = "$($u)_Run"; $val = '0'; $before = "Run=1 setT=$st"; $offSet[$u] = 1 }
+    } else { $act = $(if ($doSweep -and ($offSet.ContainsKey($u) -or $raised.ContainsKey($u))) { 'sweep_off' } else { 'off' }); $tag = "$($u)_Run"; $val = '0'; $before = "Run=1 setT=$st"; $offSet[$u] = 1 }
   }
   elseif (-not $NoSetT -and $null -ne $st -and $st -gt 5 -and $st -lt ($mn = $(if (Is-Guard $u) { $GUARD_SET_MIN } elseif (In-Zone $u) { $ZONE_SET_MIN } else { $SET_MIN })) - 0.05) { $act = 'setT_floor'; $tag = "$($u)_setT"; $val = $mn.ToString($inv); $before = "setT=$st" }
   if (-not $act) { continue }
   if ($writes -ge $MAX_WRITES) { $status.note = "max-writes $MAX_WRITES"; break }
   $ok = ''
   if ($Live) { $ok = [CticDdeW]::Poke($tag, $val); $writes++; Start-Sleep -Milliseconds 300 }
-  if ($act -eq 'off') { $status.after_off++ } elseif ($act -eq 'warm28') { $status.warm28++ } else { $status.setT_fix++ }
+  if ($act -eq 'off' -or $act -eq 'sweep_off') { $status.after_off++ } elseif ($act -eq 'warm28') { $status.warm28++ } else { $status.setT_fix++ }
   $rm = Rooms $u
   "$($now.ToString('yyyy-MM-dd HH:mm:ss')),$mode,$u,$rm,$act,$before,$ok" | Out-File $logf -Append -Encoding utf8
   $acts += "$u [$rm] $act ($before)"
