@@ -377,8 +377,11 @@ def ac_summary(rows, now):
         a = [v[k] for k in ("mag_c1_kw", "mag_c2_kw") if k in v]
         return sum(a) if a else None
 
+    # 故障中的液位計不列入平均（2026-11-16 液位計 01 故障讀 0）；修好後從這裡拿掉
+    ICE_BROKEN = {"ice01_pct"}
+
     def ice(v):
-        a = [v[k] for k in ("ice01_pct", "ice02_pct") if k in v]
+        a = [v[k] for k in ("ice01_pct", "ice02_pct") if k in v and k not in ICE_BROKEN]
         return sum(a) / len(a) if a else None
 
     buckets = {}

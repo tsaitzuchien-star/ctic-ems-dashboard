@@ -480,7 +480,7 @@
                     <div class="text-sm mt-2" id="rt-iceruns"></div></div>
                 <div class="glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-droplet mr-2 text-blue-300"></i>冰水系統</h3>
                     ${rtRow('冰水流量', 'rt-flow', 'm³/h')}${rtRow('冰水累積流量', 'rt-flowtot', 'm³')}
-                    <p class="text-xs text-slate-400 mt-3 mb-1">磁浮平均負載（%）與冰桶平均液位（%），最近 12 小時</p><div class="h-40"><canvas id="rtAc"></canvas></div>
+                    <p class="text-xs text-slate-400 mt-3 mb-1">磁浮平均負載（%）與冰桶液位（%，故障的液位計不列入平均），最近 12 小時</p><div class="h-40"><canvas id="rtAc"></canvas></div>
                     <p class="text-xs mt-2" id="rt-acnote"></p></div>
             </div>
             <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-layer-group mr-2 text-blue-300"></i>各樓層冰水供回水溫度</h3>
@@ -526,6 +526,9 @@
             updateRT();
         }
         function rtSet(id, v) { const el = document.getElementById(id); if (el) el.innerHTML = v; }
+        // 故障中的液位計：不列入平均、顯示「故障」。修好後把編號從這裡拿掉即可恢復。
+        const ICE_BROKEN = { 1: '液位計 01 故障查修中（2026-11-16）' };
+        const iceOk = k => !ICE_BROKEN[k];
         function rtPct(id, v) { rtSet(id, v == null ? '—' : fmt(v, 1) + '%'); const b = document.getElementById(id + '-bar'); if (b) b.style.width = Math.max(0, Math.min(100, v || 0)) + '%'; }
         function rtColor(el, r) { if (!el) return; el.classList.remove('border-l-emerald-400', 'border-l-amber-400', 'border-l-red-500'); el.classList.add(r >= 1 ? 'border-l-red-500' : r >= 0.9 ? 'border-l-amber-400' : 'border-l-emerald-400'); }
         // ==========================================
@@ -783,7 +786,7 @@
                 const el = document.getElementById('sbi-' + k); if (!el) return;
                 const h = v == null ? 0 : Math.max(0, Math.min(100, v)) / 100 * 84, top = 676 + 84 - h;
                 el.setAttribute('y', top); el.setAttribute('height', h);
-                const t = document.getElementById('sbp-' + k); if (t) { t.textContent = v == null ? '—' : fmt(v, 0) + '%'; t.style.fill = v != null && v > 45 ? '#0f172a' : '#e2e8f0'; }
+                const t = document.getElementById('sbp-' + k); if (t) { t.textContent = !iceOk(k) ? '故障' : v == null ? '—' : fmt(v, 0) + '%'; t.style.fill = v != null && v > 45 ? '#0f172a' : '#e2e8f0'; }
             });
             const ice = (on.BP3 || on.BP4 || on.BP5 || on.BP6) ? 'run' : (noPlant ? 'unk' : 'off');
             sysSetCls(document.getElementById('sb-ICE'), ice); rtSet('sbs-ICE', bcu === 'run' ? '製冰' : ice === 'run' ? '融冰' : '');
@@ -808,7 +811,7 @@
             rtSet('sys-rt-sub', q != null ? `流量 ${fmt(flow, 1)} m³/h × 溫差 ${fmt(dT, 1)} °C（原畫面 ${f0(a.cop_rt)} RT 用固定溫差 7.9 °C）` : '磁浮沒在跑或讀不到流量／溫度');
             rtSet('sys-cop', q != null && kw ? fmt(q / kw, 2) : '—');
             rtSet('sys-cop-sub', q != null && kw ? `冷凍能力 ${fmt(q, 0)} kW ÷ 壓縮機 ${fmt(kw, 0)} kW（原畫面 ${f1(a.cop)}）` : '—');
-            rtSet('sys-ice', `${f0(i1)}／${f0(i2)}`); rtSet('sys-ice-sub', `低於 ${f0(a.ice_low_sp)}% 會啟動冰機・${bcu === 'run' ? '製冰中' : ice === 'run' ? '融冰中' : '未製冰'}`);
+            rtSet('sys-ice', `${iceOk(1) ? f0(i1) : '故障'}／${iceOk(2) ? f0(i2) : '故障'}`); rtSet('sys-ice-sub', `低於 ${f0(a.ice_low_sp)}% 會啟動冰機・${bcu === 'run' ? '製冰中' : ice === 'run' ? '融冰中' : '未製冰'}`);
             rtSet('sys-run', noPlant ? '—' : `${nRun + (chu2 === 'run') + (bcu === 'run')} 台`);
             rtSet('sys-run-sub', noPlant ? '等 ac_logger 更新' : [chu2 === 'run' ? 'CHU-2' : '', bcu === 'run' ? 'BCU-1' : '', ...runList].filter(Boolean).join('、') || '全部停止');
             // 空調箱
@@ -853,7 +856,7 @@
                 { const kwe = (a.mag_c1_kw || 0) + (a.mag_c2_kw || 0), dT = (a.mag_chwr_c ?? 0) - (a.mag_chws_c ?? 0), q = (a.flow_m3h || 0) * 1.163 * dT, rtn = q / 3.517;
                   rtSet('rt-cop', kwe > 5 && dT > 0.5 && q > 0 ? `${fmt(q / kwe, 2)}／${fmt(kwe / rtn, 2)} <span class="text-xs text-slate-400">（${fmt(rtn, 0)} RT・溫差 ${fmt(dT, 1)}°C）</span>` : '<span class="text-slate-400">冰機未運轉</span>'); }
                 updateLight(a.light); updateZones(a);
-                rtPct('rt-ice1', a.ice01_pct); rtPct('rt-ice2', a.ice02_pct);
+                [[1, a.ice01_pct], [2, a.ice02_pct]].forEach(([k, v]) => { if (iceOk(k)) rtPct('rt-ice' + k, v); else { rtSet('rt-ice' + k, `<span class="text-amber-300 text-xs">${ICE_BROKEN[k]}</span>`); const b = document.getElementById('rt-ice' + k + '-bar'); if (b) b.style.width = '0%'; } });
                 rtSet('rt-tank', `${fmt(a.tank_out_c, 1)}／${fmt(a.tank_in_c, 1)}`); rtSet('rt-icesp', fmt(a.ice_low_sp, 0) + ' %' + (a.plant && a.plant.SGB1DC51_CHU2_Sys_IcePoint_Load != null ? (a.plant.SGB1DC51_CHU2_Sys_IcePoint_Load ? ' <span class="text-xs text-amber-300">（低於此值自動開磁浮 CHU-2：Enable）</span>' : ' <span class="text-xs text-slate-400">（低於此值自動開磁浮 CHU-2：Disable）</span>') : '')); rtSet('rt-bcut', `${fmt(a.bcu_chws_c, 1)}／${fmt(a.bcu_chwr_c, 1)}`);
                 rtSet('rt-flow', fmt(a.flow_m3h, 1)); rtSet('rt-flowtot', fmt(a.flow_tot_m3, 0));
                 const age = a.time ? (Date.now() - new Date(a.time.replace(' ', 'T') + '+08:00')) / 60000 : null;
@@ -861,7 +864,7 @@
                 const keys = rt.ac_trend_keys || [], idx = k => keys.indexOf(k) + 1;
                 acc.data.labels = (rt.ac_trend || []).map(p => p[0]);
                 acc.data.datasets[0].data = (rt.ac_trend || []).map(p => avg([p[idx('mag_c1_pct')], p[idx('mag_c2_pct')]]));
-                acc.data.datasets[1].data = (rt.ac_trend || []).map(p => avg([p[idx('ice01_pct')], p[idx('ice02_pct')]]));
+                acc.data.datasets[1].data = (rt.ac_trend || []).map(p => avg([iceOk(1) ? p[idx('ice01_pct')] : null, iceOk(2) ? p[idx('ice02_pct')] : null]));
                 acc.update('none');
                 updateMagCtl(a, rt.mag, keys, idx, avg, magc);
             } else rtSet('rt-acnote', '<span class="text-amber-300">讀不到空調監控主機（\\\\10.10.2.4\\AC_Export）</span>');
