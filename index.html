@@ -483,6 +483,9 @@
                     <p class="text-xs text-slate-400 mt-3 mb-1">磁浮平均負載（%）與冰桶平均液位（%），最近 12 小時</p><div class="h-40"><canvas id="rtAc"></canvas></div>
                     <p class="text-xs mt-2" id="rt-acnote"></p></div>
             </div>
+            <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-layer-group mr-2 text-blue-300"></i>各樓層冰水供回水溫度</h3>
+                <p class="text-xs text-slate-400 mb-3" id="rt-zonenote"></p>
+                <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-slate-400 border-b border-slate-700"><th class="pb-2">樓層</th><th class="pb-2">區域／設備</th><th class="pb-2 text-right">供水</th><th class="pb-2 text-right">回水</th><th class="pb-2 text-right">溫差</th><th class="pb-2 text-right">流量 m³/h</th></tr></thead><tbody id="rt-zones"></tbody></table></div></div>
             <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-temperature-half mr-2 text-orange-300"></i>外氣與小型送風機（FCU）</h3>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div>${rtRow('外氣溫度', 'rt-oat', '°C')}${rtRow('外氣相對溼度', 'rt-oah', '%')}${rtRow('送風機運轉台數', 'rt-fcuon')}${rtRow('平均室溫（運轉中）', 'rt-tin', '°C')}${rtRow('平均設定溫度（運轉中）', 'rt-tset', '°C')}
@@ -849,7 +852,7 @@
                 // 正確算法：Q(kW)=流量 m³/h×1.163×(回水−出水)；RT=Q/3.517；COP=Q/冰機 kW；kW/RT=冰機 kW/RT（中控畫面的公式少除 3.517、溫差為固定值）
                 { const kwe = (a.mag_c1_kw || 0) + (a.mag_c2_kw || 0), dT = (a.mag_chwr_c ?? 0) - (a.mag_chws_c ?? 0), q = (a.flow_m3h || 0) * 1.163 * dT, rtn = q / 3.517;
                   rtSet('rt-cop', kwe > 5 && dT > 0.5 && q > 0 ? `${fmt(q / kwe, 2)}／${fmt(kwe / rtn, 2)} <span class="text-xs text-slate-400">（${fmt(rtn, 0)} RT・溫差 ${fmt(dT, 1)}°C）</span>` : '<span class="text-slate-400">冰機未運轉</span>'); }
-                updateLight(a.light);
+                updateLight(a.light); updateZones(a);
                 rtPct('rt-ice1', a.ice01_pct); rtPct('rt-ice2', a.ice02_pct);
                 rtSet('rt-tank', `${fmt(a.tank_out_c, 1)}／${fmt(a.tank_in_c, 1)}`); rtSet('rt-icesp', fmt(a.ice_low_sp, 0) + ' %' + (a.plant && a.plant.SGB1DC51_CHU2_Sys_IcePoint_Load != null ? (a.plant.SGB1DC51_CHU2_Sys_IcePoint_Load ? ' <span class="text-xs text-amber-300">（低於此值自動開磁浮 CHU-2：Enable）</span>' : ' <span class="text-xs text-slate-400">（低於此值自動開磁浮 CHU-2：Disable）</span>') : '')); rtSet('rt-bcut', `${fmt(a.bcu_chws_c, 1)}／${fmt(a.bcu_chwr_c, 1)}`);
                 rtSet('rt-flow', fmt(a.flow_m3h, 1)); rtSet('rt-flowtot', fmt(a.flow_tot_m3, 0));
@@ -916,6 +919,37 @@
             '2026-11-16': '今天是儲冰／融冰實測日（凌晨 00:04–06:56 製冰、07:20 起融冰），總表多用主要是測試造成，今天不列入節電成效。'
         };
         function ymdLocal(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+        // 各樓層冰水供回水（2026-11-16）：分區 BTU 熱量計的進水／回水溫度與流量，跟磁浮出水比，看樓層是「水不夠冷」還是「水不夠多」
+        function zoneList() {
+            const z = [];
+            const A = { '01': '3F', '02': '3F', '03': '3F', '04': '2F', '05': '2F', '06': '1F', '07': '1F', '08': '2F', '09': '2F' };
+            for (let i = 1; i <= 9; i++) { const n = String(i).padStart(2, '0'); z.push({ fl: 'A棟 ' + A[n], name: `A棟分區 ${n}`, p: `SG2F11BTU_01_${n}`, s: '_Out_Temp', r: '_Return_Temp' }); }
+            const B = { '01': '1F', '02': '1F', '03': '1F', '04': '2F', '05': '2F', '06': '2F', '07': '2F' };
+            for (let i = 1; i <= 7; i++) { const n = String(i).padStart(2, '0'); z.push({ fl: 'B棟 ' + B[n], name: `B棟分區 ${n}`, p: `SG2F21BTU_01_${n}`, s: '_Out_Temp', r: '_Return_Temp' }); }
+            for (let i = 1; i <= 6; i++) { const n = String(i).padStart(2, '0'); z.push({ fl: 'B棟 ' + (i <= 4 ? '4F' : '3F'), name: `B棟分區 ${n}`, p: `SG2F22BTU_02_${n}`, s: '_Out_Temp', r: '_Return_Temp' }); }
+            const fb = { FCU_B1_BTU01: 'B1', FCU_1FB_BTU01: 'B棟 1F', FCU_1FB_BTU02: 'B棟 1F', FCU_2FB_BTU01: 'B棟 2F', FCU_2FB_BTU02: 'B棟 2F', FCU_3FB_BTU01: 'B棟 3F', FCU_3FB_BTU02: 'B棟 3F',
+                FCU_4FB_BTU01: 'B棟 4F', FCU_4FB_BTU02: 'B棟 4F', FCU_1FG_BTU01: 'G 1F', FCU_2FG_BTU01: 'G 2F', FCU_3FG_BTU01: 'G 3F', FCU_3F_BTU01: '3F',
+                PAH_111_BTU01: 'A棟 1F', AHU111_112_BTU01: 'A棟 1F', PAH121_122_BTU01: 'A棟 2F', AHU121_122_BTU01: 'A棟 2F', PAH_131_BTU01: 'A棟 3F', AHU1B1_BTU01: 'B1', AHU1B2_BTU01: 'B1',
+                PAH_211_BTU01: 'B棟 1F', PAH_212_BTU01: 'B棟 1F', PAH_213_BTU01: 'B棟 1F', PAH_221_BTU01: 'B棟 2F', PAH_222_BTU01: 'B棟 2F', PAH_231_BTU01: 'B棟 3F', PAH_232_BTU01: 'B棟 3F', PAH_241_BTU01: 'B棟 4F', PAH_242_BTU01: 'B棟 4F' };
+            for (const [b, fl] of Object.entries(fb)) z.push({ fl, name: b.replace(/_BTU0(\d)$/, ' 熱量計$1').replace(/_/g, ' ').replace(/^FCU /, '送風機 ').replace(/^PAH ?/, '外氣空調箱 ').replace(/^AHU ?/, '空調箱 '), p: b, s: '_T_Out', r: '_T_In' });
+            const ord = f => (f.startsWith('B1') ? 0 : 1) * 100 + (parseInt((f.match(/(\d)F/) || [0, 0])[1]) || 0) * 10 + (f.startsWith('A') ? 3 : f.startsWith('B') ? 2 : 1);
+            return z.sort((x, y) => ord(y.fl) - ord(x.fl));
+        }
+        const ZONES = zoneList();
+        function updateZones(a) {
+            const pl = a.plant || {};
+            if (pl.SG2F22BTU_02_01_Out_Temp === undefined) { rtSet('rt-zonenote', '還沒有分區溫度資料（空調監控主機的 ac_logger 要更新到 2026-11-16 版）'); rtSet('rt-zones', ''); return; }
+            const ref = a.chu2_st ? a.mag_chws_c : null;
+            rtSet('rt-zonenote', ref != null
+                ? `比較基準：磁浮出水 ${fmt(ref, 1)} °C。供水比基準高 2 °C 以上標紅（水在半路變熱、混到回水），高 1–2 °C 標黃；流量 0 可能是那區沒用冷氣或熱量計故障。`
+                : '磁浮沒有運轉（或正在融冰），先不做供水溫度比較；流量 0 可能是那區沒用冷氣或熱量計故障。');
+            rtSet('rt-zones', ZONES.map(z => {
+                const sv = pl[z.p + z.s], rv = pl[z.p + z.r], fv = pl[z.p + '_Flow'];
+                const dt = sv != null && rv != null ? rv - sv : null, hi = ref != null && sv != null ? sv - ref : null;
+                const sc = hi == null ? 'text-white' : hi >= 2 ? 'text-red-400 font-bold' : hi >= 1 ? 'text-amber-300' : 'text-emerald-400';
+                return `<tr class="border-b border-slate-700/40"><td class="py-1 text-slate-300">${z.fl}</td><td class="py-1 text-slate-300">${z.name}</td><td class="py-1 text-right font-mono ${sc}">${fmt(sv, 1)}</td><td class="py-1 text-right font-mono text-white">${fmt(rv, 1)}</td><td class="py-1 text-right font-mono text-white">${fmt(dt, 1)}</td><td class="py-1 text-right font-mono ${fv ? 'text-white' : 'text-slate-500'}">${fmt(fv, 1)}</td></tr>`;
+            }).join(''));
+        }
         function savRow(label, x) {
             if (!x) return '';
             const c = x.saved >= 0 ? 'text-emerald-400' : 'text-red-400';
