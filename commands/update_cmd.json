@@ -1,9 +1,9 @@
 {
-  "id": "2026-11-16-pr66-ct",
+  "id": "2026-11-16-pr67-ice",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-16T12:14:00+08:00",
-  "expires": "2026-11-16T20:14:00+08:00",
-  "note": "PR #66（Cliff 執行）：信箱加冷卻水塔設定溫度（CT1–3，24–35 °C）、排程讀回最多等 20 秒；ac_logger 記錄水塔設定；網站冰水分區表排除異常讀值",
-  "sha": "ed4ae8411f23978c4acb3e53acd451f8c0f21e22",
-  "files": [{"pc": "ac", "file": "tools/sched_cmd.ps1"}, {"pc": "ac", "file": "tools/ac_logger.ps1"}, {"pc": "bms", "file": "index.html"}]
+  "approved_at": "2026-11-16T13:27:00+08:00",
+  "expires": "2026-11-16T21:27:00+08:00",
+  "note": "PR #67（Cliff 執行）：網站冰桶液位不列入故障的液位計 01，顯示「故障」",
+  "sha": "10d4986af31559ccc8ce9c3732c19ec237dca738",
+  "files": [{"pc": "bms", "file": "index.html"}]
 }
