@@ -952,6 +952,7 @@
                 const ok = v => v != null && v >= 3 && v <= 35, t1 = pl[z.p + z.s], t2 = pl[z.p + z.r], fv = pl[z.p + '_Flow'];
                 const bad = !ok(t1) || !ok(t2);
                 const sv = bad ? null : Math.min(t1, t2), rv = bad ? null : Math.max(t1, t2);
+                if (!bad && sv >= 20) return `<tr class="border-b border-slate-700/40 text-slate-500"><td class="py-1">${z.fl}</td><td class="py-1">${z.name}</td><td class="py-1 text-right font-mono" colspan="3">${fmt(sv, 1)}／${fmt(rv, 1)}（接近室溫，設備沒開或沒有冰水流過）</td><td class="py-1 text-right font-mono">${fmt(fv, 1)}</td></tr>`;
                 const dt = sv != null && rv != null ? rv - sv : null, hi = ref != null && sv != null ? sv - ref : null;
                 if (bad) return `<tr class="border-b border-slate-700/40 text-slate-500"><td class="py-1">${z.fl}</td><td class="py-1">${z.name}</td><td class="py-1 text-right font-mono" colspan="3">${(t1 || 0) === 0 && (t2 || 0) === 0 ? '讀值 0（離線或沒裝）' : `讀值異常（${fmt(t1, 1)}／${fmt(t2, 1)}）`}</td><td class="py-1 text-right font-mono">${fmt(fv, 1)}</td></tr>`;
                 const sc = hi == null ? 'text-white' : hi >= 2 ? 'text-red-400 font-bold' : hi >= 1 ? 'text-amber-300' : 'text-emerald-400';
