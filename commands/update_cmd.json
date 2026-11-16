@@ -1,9 +1,11 @@
 {
-  "id": "2026-11-16-pr68-ct20",
+  "id": "2026-11-17-x1-pr69-fcuguard",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-16T14:37:00+08:00",
-  "expires": "2026-11-16T22:37:00+08:00",
-  "note": "PR #68（Cliff 執行）：信箱水塔設定下限 24 → 20 °C（原廠：冬季冷卻水 19–23 °C 可、16 °C 以下跳喘振）",
-  "sha": "5ed5b397620f07602c72768ec3e026484a0236ac",
-  "files": [{"pc": "ac", "file": "tools/sched_cmd.ps1"}]
+  "approved_at": "2026-11-17T06:35:54+08:00",
+  "expires": "2026-11-17T14:35:54+08:00",
+  "note": "PR #69 fcu_guard 22:00 後每 2 小時補關（Cliff 好、執行）",
+  "sha": "7c4a96de32d2ac8148e4e0470b7a961b10294990",
+  "files": [
+    { "pc": "ac", "file": "tools/fcu_guard.ps1" }
+  ]
 }
