@@ -131,7 +131,9 @@ function Save-Status { $status | ConvertTo-Json -Depth 4 | Out-File (Join-Path $
 if (Test-Path (Join-Path $Out 'fcu_guard_off.txt')) { $status.note = 'off-switch'; Save-Status; exit 0 }
 
 $units = @(Get-Content (Join-Path $Out 'fcu_tags.txt') | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^SG_.*_FCU\d+_Run$' } | ForEach-Object { $_ -replace '_Run$','' })
-$exclude = @(Lines (Join-Path $Out 'fcu_guard_exclude.txt'))
+# 程式內建永不碰（Cliff 2026-11-17 19:05）：B239 行政處辦公室（SG_2F31_P25）— 同仁常為租借活動加班，不關、不調溫度
+$ALWAYS_SKIP = @('SG_2F31_P25')
+$exclude = @(@(Lines (Join-Path $Out 'fcu_guard_exclude.txt')) + $ALWAYS_SKIP | Where-Object { $_ })
 $units = @($units | Where-Object { $u = $_; -not ($exclude | Where-Object { $u.StartsWith($_) }) })
 $status.units = $units.Count
 
