@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-17-ct12-restore",
+  "id": "2026-11-17-ct12-24-repair2",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-17T15:34:53+08:00",
-  "expires": "2026-11-17T16:40:00+08:00",
-  "note": "維修測試結束還原：CT1 設定 24 → 35 °C、CT2 設定 24 → 30 °C（原值）",
+  "approved_at": "2026-11-17T16:06:19+08:00",
+  "expires": "2026-11-17T16:30:00+08:00",
+  "note": "同仁換線後繼續測 CT1、CT2 到 16:30：設定溫度 CT1 35 → 24、CT2 30 → 24 °C；16:30 改回 CT1 35、CT2 30",
   "changes": [
-    { "kind": "ct", "tower": 1, "sp": 35 },
-    { "kind": "ct", "tower": 2, "sp": 30 }
+    { "kind": "ct", "tower": 1, "sp": 24 },
+    { "kind": "ct", "tower": 2, "sp": 24 }
   ]
 }
