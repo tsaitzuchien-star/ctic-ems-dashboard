@@ -1,12 +1,11 @@
 {
-  "id": "2026-11-17-x3-pr71-fanhz",
+  "id": "2026-11-17-x1-pr72-b239",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-17T15:40:28+08:00",
-  "expires": "2026-11-17T21:40:28+08:00",
-  "note": "PR #71 網站水塔風扇改顯示 Hz（Cliff 好、執行）；含 PR #70 sched_cmd（若前一個指令已裝則為重裝同版）",
-  "sha": "0301a98b17952d801fedfc4fcfaa1997f9574766",
+  "approved_at": "2026-11-17T19:05:39+08:00",
+  "expires": "2026-11-18T03:05:39+08:00",
+  "note": "PR #72 fcu_guard：B239 內建永不碰（Cliff 1 好、執行）",
+  "sha": "07155ad05473cf7d2091632a046df09ec8901a7b",
   "files": [
-    { "pc": "bms", "file": "index.html" },
-    { "pc": "ac", "file": "tools/sched_cmd.ps1" }
+    { "pc": "ac", "file": "tools/fcu_guard.ps1" }
   ]
 }
