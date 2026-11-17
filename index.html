@@ -712,7 +712,7 @@
             </div>
             <div class="col-span-full glass-card p-4 md:p-5"><h3 class="text-lg font-bold text-white mb-2"><i class="fa-solid fa-diagram-project mr-2 text-sky-400"></i>中央空調系統圖</h3>
                 <div class="overflow-x-auto">${sysSvg()}</div>
-                <p class="text-xs text-slate-500 mt-2">管路依中央監控畫面重畫成示意圖；發光粒子代表水正在流動，方向就是水流方向；泵浦葉輪、水塔風扇轉動代表運轉中。溫度為 InTouch 讀值；板熱的四個溫度依序是溫度 01→02 / 03→04；冷卻水塔數字為風扇變頻 %；泵浦旁的 % 是變頻輸出。</p></div>
+                <p class="text-xs text-slate-500 mt-2">管路依中央監控畫面重畫成示意圖；發光粒子代表水正在流動，方向就是水流方向；泵浦葉輪、水塔風扇轉動代表運轉中。溫度為 InTouch 讀值；板熱的四個溫度依序是溫度 01→02 / 03→04；冷卻水塔數字為風扇變頻器頻率 Hz（60 Hz＝全速，括號內為轉速 %）；泵浦旁的 % 是變頻輸出。</p></div>
             <div class="col-span-full glass-card p-4 md:p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-building mr-2 text-emerald-400"></i>空調箱昇位圖（AHU／PAH 風車狀態・回風溫度・冰水閥）</h3>
                 <div class="space-y-2">${SYS_AHU.map(([fl, us]) => `<div class="flex gap-3 items-stretch"><div class="w-12 shrink-0 text-slate-300 font-bold font-mono pt-2">${fl}</div><div class="flex flex-wrap gap-2 flex-1">${us.map(u => `<div id="sa-${u}" class="rounded-lg border border-slate-600 bg-slate-800/60 px-3 py-2 min-w-[132px]"><div class="flex justify-between gap-2 text-sm"><span class="font-bold text-white"><i class="fa-solid fa-fan sys-fan mr-1 text-slate-500"></i>${u.replace('_', '-')}</span><span id="sas-${u}" class="text-xs text-slate-500">—</span></div><div id="sav-${u}" class="text-xs font-mono text-slate-300 mt-0.5">—</div>${SYS_AHU_NOTE[u] ? `<div class="text-[11px] text-slate-500">${SYS_AHU_NOTE[u]}</div>` : ''}</div>`).join('')}</div></div>`).join('')}</div>
                 <p class="text-xs text-slate-500 mt-3">箱型機 PKG01/02 與 CRAC20-1/2 在中央監控沒有狀態點，未列入。</p></div>`;
@@ -751,7 +751,7 @@
             [1, 2, 3].forEach(n => {
                 const st = sysState(pl, `SGB1DC51_CT${n}_ST`, `SGB1DC51_CT${n}_TR`); on['CT' + n] = st === 'run'; if (on['CT' + n]) { nRun++; runList.push('CT' + n); }
                 sysSetCls(document.getElementById('sb-CT' + n), st); rtSet('sbs-CT' + n, SYS_STXT[st]);
-                const v = sysNum(pl[`SGB1DC51_CT${n}_VFD_FB`]); rtSet('svv-CT' + n, st === 'run' && v != null ? `風扇 ${fmt(v, 0)}%` : '');
+                const v = sysNum(pl[`SGB1DC51_CT${n}_VFD_FB`]); rtSet('svv-CT' + n, st === 'run' && v != null ? (v >= 59.5 ? `風扇 ${fmt(v, 0)} Hz（全速）` : `風扇 ${fmt(v, 0)} Hz（${fmt(v / 60 * 100, 0)}%）`) : '');
             });
             document.querySelectorAll('#cardsContainer .sys-pipe').forEach(p => p.classList.toggle('on', (p.dataset.on || '').split(',').some(k => on[k])));
             // 主機
