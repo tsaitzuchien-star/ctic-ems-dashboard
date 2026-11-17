@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-17-x1-pr69-fcuguard",
+  "id": "2026-11-17-x2-pr70-ctline",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-17T06:35:54+08:00",
-  "expires": "2026-11-17T14:35:54+08:00",
-  "note": "PR #69 fcu_guard 22:00 後每 2 小時補關（Cliff 好、執行）",
-  "sha": "7c4a96de32d2ac8148e4e0470b7a961b10294990",
+  "approved_at": "2026-11-17T15:34:08+08:00",
+  "expires": "2026-11-17T21:34:08+08:00",
+  "note": "PR #70 信箱水塔設定 LINE 只留 1 位小數、拿掉「測完要改回」（Cliff 好、執行）",
+  "sha": "e8917df57e35f319e0693e3e043d7c84acb3ad66",
   "files": [
-    { "pc": "ac", "file": "tools/fcu_guard.ps1" }
+    { "pc": "ac", "file": "tools/sched_cmd.ps1" }
   ]
 }
