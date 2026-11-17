@@ -422,12 +422,13 @@ foreach ($c in $changes) {
   }
   if ("$($c.kind)" -eq 'ct') {
     $tag = "SGB1DC51_CT$($c.tower)_PID_SP"; $val = [double]"$($c.sp)"; $label = "冷卻水塔 CT$($c.tower) 設定溫度"
-    $b = [CticDdeW]::Read([string[]]@($tag), 3000, 10000); $bv = $(if ($null -ne $b) { "$($b[0])" } else { '?' })
+    $b = [CticDdeW]::Read([string[]]@($tag), 3000, 10000); $bd = 0.0
+    $bv = $(if ($null -ne $b -and [double]::TryParse("$($b[0])", [Globalization.NumberStyles]::Float, $inv, [ref]$bd)) { [math]::Round($bd, 1).ToString($inv) } elseif ($null -ne $b) { "$($b[0])" } else { '?' })  # DDE 讀回是長字串（30.0000…），只留 1 位小數
     if ($DryRun) { $res.lines += "${label}：目前 $bv°C → $val°C（試跑，沒寫）"; continue }
     $null = [CticDdeW]::Poke($tag, $val.ToString($inv)); Start-Sleep -Seconds 3
     $a = [CticDdeW]::Read([string[]]@($tag), 3000, 10000); $av = 0.0
     if ($null -ne $a -and [double]::TryParse("$($a[0])", [Globalization.NumberStyles]::Float, $inv, [ref]$av) -and [math]::Abs($av - $val) -lt 0.05) {
-      $res.lines += "${label}：$bv → $av°C ✅（原本 $bv°C，測完要改回）" }
+      $res.lines += "${label}：$bv → $([math]::Round($av, 1).ToString($inv))°C ✅（原本 $bv°C，測完要改回）" }
     else { $allOk = $false; $res.lines += "${label}：寫入 $val°C 後讀回 $(if ($null -ne $a) { $a[0] } else { '讀不到' })，不一致 ❌（原本 $bv°C）" }
     continue
   }
