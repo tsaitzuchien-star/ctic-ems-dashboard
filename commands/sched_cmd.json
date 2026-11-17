@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-17-ct-restore",
+  "id": "2026-11-17-ct12-24-repair",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-17T13:50:00+08:00",
-  "expires": "2026-11-17T15:45:00+08:00",
-  "note": "測試結束還原：CT2 設定 27 → 30 °C、CT1 設定 27 → 35 °C（原值）",
+  "approved_at": "2026-11-17T15:34:53+08:00",
+  "expires": "2026-11-17T16:05:00+08:00",
+  "note": "同仁維修測試 CT1、CT2 變頻器：設定溫度 CT1 35 → 24、CT2 30 → 24 °C，讓 PID 送出頻率命令；測完改回 CT1 35、CT2 30",
   "changes": [
-    { "kind": "ct", "tower": 2, "sp": 30 },
-    { "kind": "ct", "tower": 1, "sp": 35 }
+    { "kind": "ct", "tower": 1, "sp": 24 },
+    { "kind": "ct", "tower": 2, "sp": 24 }
   ]
 }
