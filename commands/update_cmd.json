@@ -1,11 +1,12 @@
 {
-  "id": "2026-11-17-x2-pr70-ctline",
+  "id": "2026-11-17-x3-pr71-fanhz",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-17T15:34:08+08:00",
-  "expires": "2026-11-17T21:34:08+08:00",
-  "note": "PR #70 信箱水塔設定 LINE 只留 1 位小數、拿掉「測完要改回」（Cliff 好、執行）",
-  "sha": "e8917df57e35f319e0693e3e043d7c84acb3ad66",
+  "approved_at": "2026-11-17T15:40:28+08:00",
+  "expires": "2026-11-17T21:40:28+08:00",
+  "note": "PR #71 網站水塔風扇改顯示 Hz（Cliff 好、執行）；含 PR #70 sched_cmd（若前一個指令已裝則為重裝同版）",
+  "sha": "0301a98b17952d801fedfc4fcfaa1997f9574766",
   "files": [
+    { "pc": "bms", "file": "index.html" },
     { "pc": "ac", "file": "tools/sched_cmd.ps1" }
   ]
 }
