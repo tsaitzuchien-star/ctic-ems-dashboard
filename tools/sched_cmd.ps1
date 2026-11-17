@@ -428,7 +428,7 @@ foreach ($c in $changes) {
     $null = [CticDdeW]::Poke($tag, $val.ToString($inv)); Start-Sleep -Seconds 3
     $a = [CticDdeW]::Read([string[]]@($tag), 3000, 10000); $av = 0.0
     if ($null -ne $a -and [double]::TryParse("$($a[0])", [Globalization.NumberStyles]::Float, $inv, [ref]$av) -and [math]::Abs($av - $val) -lt 0.05) {
-      $res.lines += "${label}：$bv → $([math]::Round($av, 1).ToString($inv))°C ✅（原本 $bv°C，測完要改回）" }
+      $res.lines += "${label}：$bv → $([math]::Round($av, 1).ToString($inv))°C ✅（原本 $bv°C）" }
     else { $allOk = $false; $res.lines += "${label}：寫入 $val°C 後讀回 $(if ($null -ne $a) { $a[0] } else { '讀不到' })，不一致 ❌（原本 $bv°C）" }
     continue
   }
