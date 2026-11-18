@@ -1,11 +1,10 @@
 {
-  "id": "2026-11-17-x1-b239-25",
+  "id": "2026-11-18-ct2-27",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-17T19:04:16+08:00",
-  "expires": "2026-11-17T21:00:00+08:00",
-  "note": "B239 汎德加班：開啟並加入今晚加班名單（避免被調 28°C），設定 25°C（Cliff 19:04）",
+  "approved_at": "2026-11-18T09:33:00+08:00",
+  "expires": "2026-11-18T11:30:00+08:00",
+  "note": "水塔一座 vs 兩座測試：CT2 設定 30 → 27 °C（11:00–12:00 兩座一起跑），12:00 改回 30",
   "changes": [
-    { "kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "on" },
-    { "kind": "fcu", "room": "B239", "units": ["FCU01", "FCU02"], "action": "setT", "value": 25 }
+    { "kind": "ct", "tower": 2, "sp": 27 }
   ]
 }
