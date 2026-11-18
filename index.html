@@ -475,7 +475,7 @@
                     ${rtRow('壓縮機 1／2 功率', 'rt-ckw', 'kW')}${rtRow('合計功率', 'rt-magkw', 'kW')}${rtRow('負載限制', 'rt-limit', '%')}
                     ${rtRow('冰水出水／回水', 'rt-chw', '°C')}${rtRow('冷卻水出水／回水', 'rt-cw', '°C')}${rtRow('COP／kW/RT', 'rt-cop')}${rtRow('今日運轉（迴路電表）', 'rt-magday')}</div>
                 <div class="glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-cubes-stacked mr-2 text-cyan-300"></i>儲冰系統 BCU-1／冰桶</h3>
-                    ${rtBar('冰桶 01 液位', 'rt-ice1')}${rtBar('冰桶 02 液位', 'rt-ice2')}
+                    ${rtBar('冰桶 01 液位', 'rt-ice1')}${rtBar('冰桶 15 液位', 'rt-ice2')}
                     ${rtRow('儲冰槽出水／入水', 'rt-tank', '°C')}${rtRow('冰桶低限自動啟動', 'rt-icesp')}${rtRow('BCU-1 冰水出水／回水', 'rt-bcut', '°C')}${rtRow('BCU-1 功率（最近 15 分）', 'rt-bcukw', 'kW')}
                     <div class="text-sm mt-2" id="rt-iceruns"></div></div>
                 <div class="glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-droplet mr-2 text-blue-300"></i>冰水系統</h3>
@@ -527,7 +527,8 @@
         }
         function rtSet(id, v) { const el = document.getElementById(id); if (el) el.innerHTML = v; }
         // 故障中的液位計：不列入平均、顯示「故障」。修好後把編號從這裡拿掉即可恢復。
-        const ICE_BROKEN = { 1: '液位計 01 故障查修中（2026-11-16）' };
+        const ICE_BROKEN = { 2: '冰桶 15 表頭類比輸出故障，待換表頭（2026-11-18）' };
+        const ICE_NAME = { 1: '冰桶 01', 2: '冰桶 15' };
         const iceOk = k => !ICE_BROKEN[k];
         function rtPct(id, v) { rtSet(id, v == null ? '—' : fmt(v, 1) + '%'); const b = document.getElementById(id + '-bar'); if (b) b.style.width = Math.max(0, Math.min(100, v || 0)) + '%'; }
         function rtColor(el, r) { if (!el) return; el.classList.remove('border-l-emerald-400', 'border-l-amber-400', 'border-l-red-500'); el.classList.add(r >= 1 ? 'border-l-red-500' : r >= 0.9 ? 'border-l-amber-400' : 'border-l-emerald-400'); }
@@ -598,7 +599,7 @@
                 <rect id="sbi-${k}" x="${x}" y="${y + h}" width="${w}" height="0" fill="url(#gIce)" clip-path="url(#sysTc${k})"/>
                 <ellipse cx="${x + w / 2}" cy="${y}" rx="${w / 2}" ry="7" fill="#1e293b" stroke="#64748b"/><ellipse cx="${x + w / 2}" cy="${y + h}" rx="${w / 2}" ry="7" fill="none" stroke="#64748b"/>
                 <text id="sbp-${k}" x="${x + w / 2}" y="${y + h / 2 + 6}" text-anchor="middle" class="sys-big">—</text>
-                <text x="${x + w / 2}" y="${y + h + 22}" text-anchor="middle" class="sys-dim">冰桶 0${k}</text></g>`;
+                <text x="${x + w / 2}" y="${y + h + 22}" text-anchor="middle" class="sys-dim">${ICE_NAME[k]}</text></g>`;
         }
         function sysSvg() {
             const P = SYS_C;
@@ -1108,7 +1109,7 @@
             const stale = ac.age_min != null && ac.age_min > 30;
             return `<div class="mb-2 pb-2 border-b border-slate-700">
                 <p class="text-xs text-slate-400 mb-1">空調中央監控 ${ac.time}${stale ? '<span class="text-amber-300">（超過 30 分鐘沒有新資料，請確認空調監控主機的 WindowViewer 有開著）</span>' : ''}</p>
-                ${row('冰桶液位 01／02', `${fmt(L.ice01_pct, 1)}%／${fmt(L.ice02_pct, 1)}%`)}
+                ${row('冰桶液位 01／15', `${fmt(L.ice01_pct, 1)}%／${fmt(L.ice02_pct, 1)}%`)}
                 ${row('磁浮 CHU-2 負載', `${fmt(ac.mag_pct, 0)}%（限制 ${fmt(L.mag_limit_pct, 0)}%）・${fmt(ac.mag_kw, 0)} kW`)}
                 ${row('冰水出／回水', `${fmt(L.mag_chws_c, 1)}／${fmt(L.mag_chwr_c, 1)} °C・流量 ${fmt(L.flow_m3h, 0)} m³/h`)}
             </div>`;
