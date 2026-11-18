@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-18-x1-pr75-b236",
+  "id": "2026-11-18-k32-pr73-icebucket",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-18T18:09:52+08:00",
-  "expires": "2026-11-19T02:09:52+08:00",
-  "note": "PR #74＋#75 信箱：加班名單 allow、送風機授權加 B236（Cliff 好執行）",
+  "approved_at": "2026-11-18T18:35:11+08:00",
+  "expires": "2026-11-19T02:35:11+08:00",
+  "note": "PR #73 冰桶液位：01 已修復、15 故障，標籤 01／15（Cliff 執行）",
   "sha": "9c00e3783e2269dc2b980a5010339ebc2ad4b879",
   "files": [
-    { "pc": "ac", "file": "tools/sched_cmd.ps1" }
+    { "pc": "bms", "file": "index.html" }
   ]
 }
