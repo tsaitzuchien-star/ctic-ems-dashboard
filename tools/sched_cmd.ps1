@@ -37,6 +37,10 @@
 #   存到 C:\BMS_Export\shots：整個螢幕 shot_<時間>_screen.png，與 InTouch WindowViewer 視窗本身 shot_<時間>_intouch.png
 #   （用 PrintWindow，被其他視窗擋住也截得到 InTouch 目前顯示的那一頁）。只保留最近 30 張。
 #   監控電腦 circuit_export 會把 shots 複製到 Google 雲端 BMS自動匯出\shots。螢幕鎖定時整個螢幕那張可能是黑的。
+# 加班名單（2026-11-18 起，Cliff 授權）：kind = allow，在今晚的 afterhours_allow_yyyy-MM-dd.txt 加一行「房號 結束時間」，
+#   fcu_guard 下班巡檢就不會關、不會調 28°C（到結束時間為止）。只寫名單檔，不寫任何 InTouch 點位。
+#   {"kind":"allow","room":"B236","until":"20:00"}
+#   名單檔都不存在時不建立（不存在 = 晚上關機規則沒啟用，建了反而會開始關別人）。
 # 冷卻水塔設定溫度（2026-11-16 起，空調同仁經 Cliff 授權，給待測項目用）：kind = ct，只寫 SGB1DC51_CT<n>_PID_SP。
 #   {"kind":"ct","tower":3,"sp":22}     tower 只能 1、2、3；sp 只允許 20–35 °C（2026-11-16 堃霖原廠：冬季冷卻水可降到 19–23 °C，低於 16 °C 會跳喘振；下限取 20，保留 4 °C 安全距離）。
 #   寫入前讀現值、寫入 3 秒後讀回核對，結果附「原本幾度」，測完照原值送回去。不碰風扇啟停、變頻手動輸出、PID 參數。
@@ -230,6 +234,11 @@ public static class CticShot {
 function Check-Change($c, $now) {
   # 回傳 $null = 通過；否則回傳擋下的原因
   if ("$($c.kind)" -eq 'screenshot') { return $null }
+  if ("$($c.kind)" -eq 'allow') {
+    if ("$($c.room)" -notmatch '^[A-C]\d{3}$') { return "房號 $($c.room) 格式不對（例如 B236）" }
+    if (-not (Hm-Ok $c.until) -or "$($c.until)" -lt '18:00') { return "結束時間 $($c.until) 要是 18:00–23:59 的 HH:MM" }
+    return $null
+  }
   if ("$($c.kind)" -eq 'ct') {
     if (@('1','2','3') -notcontains "$($c.tower)") { return "冷卻水塔 $($c.tower) 不對（只能 1、2、3）" }
     $v = 0.0
@@ -291,7 +300,7 @@ function Check-Change($c, $now) {
     if ($null -eq $cs) { return "照明迴路不對（要 all 或 $($LIGHT_CIRCUITS -join ',') 其中幾個）" }
     return $null
   }
-  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit / event / hist / screenshot / ct）" }
+  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit / event / hist / screenshot / ct / allow）" }
   $d = 0; if (-not [int]::TryParse("$($c.day)", [ref]$d) -or $d -lt 1 -or $d -gt 7) { return "星期 $($c.day) 不對（1–7）" }
   if (-not (Hm-Ok $c.on) -or -not (Hm-Ok $c.off)) { return "時間格式不對（$($c.on)–$($c.off)，要 HH:MM）" }
   if ("$($c.en)" -ne '0' -and "$($c.en)" -ne '1') { return "勾選 en 只能 0 或 1" }
@@ -406,7 +415,7 @@ if (($exp - $apv).TotalHours -gt 24) { $res.status = 'rejected'; $res.lines = @(
 $changes = @($cmd.changes)
 if ($changes.Count -lt 1 -or $changes.Count -gt 21) { $res.status = 'rejected'; $res.lines = @('沒有要改的項目，或一次超過 21 筆'); Save-Result $res; exit 0 }
 $why = @()
-foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } elseif ("$($c.kind)" -eq 'event') { "活動登記 $e" } elseif ("$($c.kind)" -eq 'hist') { "匯出歷史 $e" } elseif ("$($c.kind)" -eq 'screenshot') { "截圖 $e" } elseif ("$($c.kind)" -eq 'ct') { "冷卻水塔 $e" } else { "$(Day-Label $c.day) $e" }) } }
+foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } elseif ("$($c.kind)" -eq 'event') { "活動登記 $e" } elseif ("$($c.kind)" -eq 'hist') { "匯出歷史 $e" } elseif ("$($c.kind)" -eq 'screenshot') { "截圖 $e" } elseif ("$($c.kind)" -eq 'ct') { "冷卻水塔 $e" } elseif ("$($c.kind)" -eq 'allow') { "加班名單 $e" } else { "$(Day-Label $c.day) $e" }) } }
 if ($why.Count) { $res.status = 'rejected'; $res.lines = @('整筆指令沒有執行：') + $why; Save-Result $res; exit 0 }
 
 # ---- 寫入（WindowViewer 要開著） ----
@@ -418,6 +427,19 @@ foreach ($c in $changes) {
   if ("$($c.kind)" -eq 'screenshot') {
     if ($DryRun) { $res.lines += '截圖：會存整個螢幕與 InTouch 視窗各一張（試跑，沒截）'; continue }
     try { $res.lines += @(Take-Shots) } catch { $allOk = $false; $res.lines += "截圖失敗：$($_.Exception.Message) ❌" }
+    continue
+  }
+  if ("$($c.kind)" -eq 'allow') {
+    $day = $(if ($now.ToString('HH:mm') -lt '07:00') { $now.AddDays(-1) } else { $now })
+    $f1 = Join-Path $Out ("afterhours_allow_{0:yyyy-MM-dd}.txt" -f $day); $f2 = Join-Path $Out 'afterhours_allow.txt'
+    $label = "加班名單 $($c.room) 到 $($c.until)（$(Split-Path $f1 -Leaf)）"
+    if (-not (Test-Path $f1) -and -not (Test-Path $f2)) { $res.lines += "${label}：名單檔不存在 = 晚上關機規則沒啟用，不用加 ℹ️"; continue }
+    if ($DryRun) { $res.lines += "${label}：會加入（試跑，沒寫）"; continue }
+    try {
+      if (-not (Test-Path $f1)) { Copy-Item $f2 $f1 }
+      "$($c.room) $($c.until)   # 指令信箱 $($cmd.id) $(Get-Date -f 'HH:mm')" | Out-File $f1 -Append -Encoding utf8
+      $res.lines += "${label}：已加入 ✅"
+    } catch { $allOk = $false; $res.lines += "${label}：寫入失敗 $($_.Exception.Message) ❌" }
     continue
   }
   if ("$($c.kind)" -eq 'ct') {
