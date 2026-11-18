@@ -1,10 +1,10 @@
 {
-  "id": "2026-11-18-x1-pr74-allow",
+  "id": "2026-11-18-x1-pr75-b236",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-18T18:07:05+08:00",
-  "expires": "2026-11-19T02:07:05+08:00",
-  "note": "PR #74 信箱新增 allow（加班名單）：B236 警勤季會到 20:00（Cliff 好執行）",
-  "sha": "5ec4ed85cb50e6b60c50a86242ab67e784b2dc3e",
+  "approved_at": "2026-11-18T18:09:52+08:00",
+  "expires": "2026-11-19T02:09:52+08:00",
+  "note": "PR #74＋#75 信箱：加班名單 allow、送風機授權加 B236（Cliff 好執行）",
+  "sha": "9c00e3783e2269dc2b980a5010339ebc2ad4b879",
   "files": [
     { "pc": "ac", "file": "tools/sched_cmd.ps1" }
   ]
