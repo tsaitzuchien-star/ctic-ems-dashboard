@@ -754,7 +754,7 @@ canvas{width:100%;height:240px;display:block}
  <div class="c" id="cAc"><div class="l" id="acT">空調中央監控</div>
   <div class="row"><span>磁浮 CHU-2 負載</span><b id="mag">—</b></div>
   <div class="row"><span>磁浮功率</span><b id="magkw">—</b></div>
-  <div class="row"><span>冰桶液位 01／02</span><b id="ice">—</b></div>
+  <div class="row"><span>冰桶液位 01／15</span><b id="ice">—</b></div>
   <div class="row"><span>冰水出／回水</span><b id="chw">—</b></div>
   <div class="row"><span>冰水流量</span><b id="flow">—</b></div></div>
  <div class="c wide"><div class="l">今日各 15 分鐘需量（台電基準）</div><canvas id="bars" style="height:160px"></canvas></div>
