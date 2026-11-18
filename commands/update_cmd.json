@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-18-x1-restart-livesite",
+  "id": "2026-11-18-x1-pr74-allow",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-18T12:06:33+08:00",
-  "expires": "2026-11-18T18:06:33+08:00",
-  "note": "即時監控網頁打不開：重裝 ems_calc.py（同版）以重新啟動 CTIC_Local_Live（Cliff 執行）",
-  "sha": "07155ad05473cf7d2091632a046df09ec8901a7b",
+  "approved_at": "2026-11-18T18:07:05+08:00",
+  "expires": "2026-11-19T02:07:05+08:00",
+  "note": "PR #74 信箱新增 allow（加班名單）：B236 警勤季會到 20:00（Cliff 好執行）",
+  "sha": "5ec4ed85cb50e6b60c50a86242ab67e784b2dc3e",
   "files": [
-    { "pc": "bms", "file": "tools/ems_calc.py" }
+    { "pc": "ac", "file": "tools/sched_cmd.ps1" }
   ]
 }
