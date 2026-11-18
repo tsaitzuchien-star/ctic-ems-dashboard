@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-17-x1-pr72-b239",
+  "id": "2026-11-18-x1-restart-livesite",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-17T19:05:39+08:00",
-  "expires": "2026-11-18T03:05:39+08:00",
-  "note": "PR #72 fcu_guard：B239 內建永不碰（Cliff 1 好、執行）",
+  "approved_at": "2026-11-18T12:06:33+08:00",
+  "expires": "2026-11-18T18:06:33+08:00",
+  "note": "即時監控網頁打不開：重裝 ems_calc.py（同版）以重新啟動 CTIC_Local_Live（Cliff 執行）",
   "sha": "07155ad05473cf7d2091632a046df09ec8901a7b",
   "files": [
-    { "pc": "ac", "file": "tools/fcu_guard.ps1" }
+    { "pc": "bms", "file": "tools/ems_calc.py" }
   ]
 }
