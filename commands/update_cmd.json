@@ -1,11 +1,14 @@
 {
-  "id": "2026-11-18-k32-pr73-icebucket",
+  "id": "2026-11-19-k32-pr76-oarh",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-18T18:35:11+08:00",
-  "expires": "2026-11-19T02:35:11+08:00",
-  "note": "PR #73 冰桶液位：01 已修復、15 故障，標籤 01／15（Cliff 執行）",
-  "sha": "9c00e3783e2269dc2b980a5010339ebc2ad4b879",
+  "approved_at": "2026-11-19T12:34:06+08:00",
+  "expires": "2026-11-19T20:34:06+08:00",
+  "note": "PR #76 外氣溫濕度候選點位記錄（AHU_111_MAU OATEMP/OARH/OAH 等），Cliff 2026-11-19 12:33 執行",
+  "sha": "a33c12ebabbd5a18e785efa98273f2113e28bc71",
   "files": [
-    { "pc": "bms", "file": "index.html" }
+    {
+      "pc": "ac",
+      "file": "tools/ac_logger.ps1"
+    }
   ]
 }
