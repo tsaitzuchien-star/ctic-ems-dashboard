@@ -96,6 +96,14 @@ foreach ($t in 'BCU_TR11','CHP5_VFD_FB','CHP6_VFD_FB','CT1_VFD_FB','CT2_VFD_FB',
 foreach ($n in 1..19) { if ($n -ne 16) { $plantTags.Add(('{0}Sys_T{1:00}' -f $d, $n)) } }
 # 外氣鎖定（2026-11-10）：現場 PLC 規則「外氣溫度低於設定值，冰機不開機」。畫面「冰水主機系統」左上角，只讀。
 $plantTags.Add("$($d)CHU1_OAH"); $plantTags.Add("$($d)CHU1_OAH_SP")
+# 外氣溫溼度候選點位（2026-11-19，Cliff：找濕度算濕球／露點／焓值）：CHU1_OAH 只有溫度。以下全部只讀，記一週後挑出正常的感測器。
+foreach ($t in 'AHU_111_MAU_OATEMP','AHU_111_MAU_OARH','AHU_111_MAU_OAH') { $plantTags.Add($t) }   # 廚房外氣風機：外氣溫度／濕度／焓值 kJ/kg
+foreach ($t in 'SG2F12BTU_02_TH01','SG2F12BTU_02_TH02','SG2F21BTU_01_TH01','SG2F21BTU_01_TH02','SG2F21BTU_01_TH03','SG2F21BTU_01_TH04',
+               'SG2F22BTU_02_TH05','SG2F22BTU_02_TH06','SG2F22BTU_02_TH07') { $plantTags.Add("$($t)_T"); $plantTags.Add("$($t)_H") }   # A／B 棟 2F 溫溼度計
+foreach ($u in 'AHU_111','AHU_112','AHU_121','AHU_122','AHU_1B1','AHU_1B2','AHU_G11','AHU_G21','AHU_G31','AHU_GB1','AHU_GB2',
+               'PAH_111','PAH_112','PAH_121','PAH_122','PAH_131','PAH_132','PAH_211','PAH_212','PAH_213','PAH_221','PAH_222','PAH_231','PAH_232','PAH_241','PAH_242') {
+  $plantTags.Add("$($u)_OAT"); $plantTags.Add("$($u)_OAH")   # 各空調箱外氣溫度／溼度
+}
 # 冷卻水塔設定溫度與手自動（2026-11-16，水塔待測項目）：只讀。
 foreach ($n in 1..3) { foreach ($t in 'PID_SP','AM','SCADA_AM','VFD_AOP','VFD_AM') { $plantTags.Add("$($d)CT$($n)_$t") } }
 # 儲冰／融冰搭配查核（2026-11-15，明年夏月規劃）：冰桶低限自動啟動、卸載點、融冰板熱與滷水泵 PID 設定、BCU 圖控手自動。全部只讀。
