@@ -12,6 +12,11 @@
 6. 排程指令信箱（sched_cmd.ps1）的執行結果：已執行／被擋下／沒完成，每筆推一次。
 7. 磁浮開機看門狗（2026-11-10）：排程開機 10 分鐘後還沒運轉 → 依現場外氣鎖定判斷是正常還是異常。
 為了守住免費方案每月 200 則（則數 × 好友人數），每天最多推 MAX_PER_DAY 則（摘要不受限）。
+8. 紀錄寫回 GitHub（2026-11-21，LINE 額度用完後 Cliff 選的做法）：同資料夾有 github_token.txt 時，
+   所有通知與指令／程式更新的執行結果，每 2 分鐘最多一次批次送到 Smart-Energy-Dashboard 的 ems_feed 工作流程，
+   存進 ems-feed 分支（feed.jsonl、results/*.json），Claude 自己讀來確認。
+   這時下面幾類「只寫 GitHub、不推 LINE」：指令／程式更新成功與試跑、磁浮自動控制例行調整、磁浮依外氣鎖定不開機的說明。
+   被擋下／失敗的結果、告警、恢復、每日摘要照樣推 LINE。GitHub 連續送不出去 6 分鐘，指令結果改回推 LINE。
 
 測試：python line_push.py --test   （先印出方案上限／本月已用／好友數，再送一則測試訊息）
       python line_push.py --test --quota   （只看用量，不送）
@@ -30,6 +35,13 @@ URL = "https://api.line.me/v2/bot/message/broadcast"
 MAX_PER_DAY = 12
 LEVELS = (1.00, 0.95, 0.90)
 SUMMARY_AM, SUMMARY_PM = "08:00", "19:10"
+GH_TOKEN_FILE = os.path.join(HERE, "github_token.txt")   # 只開 Smart-Energy-Dashboard Actions 寫入權限（circuit_export.py 也用這個）
+FEED_URL = ("https://api.github.com/repos/tsaitzuchien-star/Smart-Energy-Dashboard"
+            "/actions/workflows/ems_feed.yml/dispatches")
+FEED_EVERY_S = 120             # 最多每 2 分鐘送一批
+FEED_MAX_CHARS = 60000         # workflow_dispatch 單一輸入上限 65535 字
+FEED_QUEUE_MAX = 300
+FEED_FALLBACK_TRIES = 3        # 指令結果連續 3 次（約 6 分鐘）送不上 GitHub → 改推 LINE
 
 
 def _hist_baseline():
@@ -88,6 +100,52 @@ def send(text, token):
         return ok
     except Exception as e2:
         _log(f"send failed: python {err}; powershell {e2}")
+        return False
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def gh_dispatch(items, token):
+    """把一批紀錄送到 ems_feed 工作流程。成功（HTTP 204）回傳 True。公司網路攔 SSL 時改用 PowerShell。"""
+    import urllib.request
+    body = json.dumps({"ref": "main", "inputs": {"body": json.dumps(items, ensure_ascii=False)}},
+                      ensure_ascii=False).encode("utf-8")
+    hdr = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+           "User-Agent": "ctic-line-push", "Content-Type": "application/json; charset=utf-8"}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(FEED_URL, data=body, method="POST", headers=hdr),
+                                    timeout=30) as r:
+            return r.status in (200, 204)
+    except Exception as e:
+        err = e
+    if os.name != "nt":
+        _log(f"feed failed: {err}")
+        return False
+    import base64
+    import subprocess
+    import tempfile
+    with tempfile.NamedTemporaryFile("wb", suffix=".json", delete=False) as f:
+        f.write(body)
+        path = f.name
+    ps = ("[Net.ServicePointManager]::SecurityProtocol='Tls12';"
+          "$b=[IO.File]::ReadAllBytes($env:GH_BODY);"
+          "$h=@{Authorization='Bearer '+$env:GH_TOKEN;Accept='application/vnd.github+json';'User-Agent'='ctic-line-push'};"
+          "$r=Invoke-WebRequest -UseBasicParsing -Method Post -Uri $env:GH_URL -Headers $h "
+          "-ContentType 'application/json; charset=utf-8' -Body $b;$r.StatusCode")
+    enc = base64.b64encode(ps.encode("utf-16-le")).decode()
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc],
+                             env=dict(os.environ, GH_TOKEN=token, GH_BODY=path, GH_URL=FEED_URL),
+                             capture_output=True, text=True, timeout=60, creationflags=0x08000000)
+        ok = out.stdout.strip().endswith("204")
+        if not ok:
+            _log(f"feed failed: python {err}; powershell {out.stdout.strip()[-200:]} {out.stderr.strip()[:200]}")
+        return ok
+    except Exception as e2:
+        _log(f"feed failed: python {err}; powershell {e2}")
         return False
     finally:
         try:
@@ -233,6 +291,11 @@ class Notifier:
             pass
         self.fault_since = {}
         self.saved_at = dt.datetime.min
+        self.gh_token = None
+        if os.path.exists(GH_TOKEN_FILE):
+            with open(GH_TOKEN_FILE, encoding="utf-8") as f:
+                self.gh_token = f.read().strip() or None
+        self.feed, self.feed_at, self.feed_busy, self.feed_done = [], dt.datetime.min, False, None
 
     @property
     def enabled(self):
@@ -246,7 +309,50 @@ class Notifier:
         except OSError:
             pass
 
-    def _push(self, text, force=False):
+    def _feed(self, kind, text, **extra):
+        """記一筆到 GitHub 紀錄（沒有 github_token.txt 就不記）。"""
+        if not self.gh_token:
+            return
+        self.feed.append(dict(time=dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), kind=kind, text=text, **extra))
+        del self.feed[:-FEED_QUEUE_MAX]
+
+    def _flush_feed(self, now):
+        """每 2 分鐘最多送一批到 GitHub；在背景執行緒送，結果下一輪在主執行緒處理。"""
+        if self.feed_done is not None:
+            batch, ok = self.feed_done
+            self.feed_done = None
+            if not ok:
+                for it in batch:
+                    it["_tries"] = it.get("_tries", 0) + 1
+                    if it.get("_line") and it["_tries"] >= FEED_FALLBACK_TRIES:
+                        self._push(it.pop("_line"), force=True, feed=False)   # GitHub 送不上，指令結果改推 LINE
+                self.feed[:0] = batch
+                del self.feed[:-FEED_QUEUE_MAX]
+        if self.feed_busy or not self.feed or (now - self.feed_at).total_seconds() < FEED_EVERY_S:
+            return
+        batch, size = [], 0
+        while self.feed and size < FEED_MAX_CHARS - 6000:
+            it = self.feed.pop(0)
+            size += len(json.dumps(it, ensure_ascii=False))
+            batch.append(it)
+        self.feed_at, self.feed_busy = now, True
+
+        def work():
+            items = [{k: v for k, v in it.items() if not k.startswith("_")} for it in batch]
+            try:
+                ok = gh_dispatch(items, self.gh_token)
+            except Exception as e:
+                _log(f"feed error {e}")
+                ok = False
+            self.feed_done, self.feed_busy = (batch, ok), False
+        threading.Thread(target=work, daemon=True).start()
+
+    def _push(self, text, force=False, line=True, feed=True):
+        """line=False：有 github_token.txt 時只寫 GitHub 紀錄、不推 LINE（沒有 token 就照舊推 LINE）。"""
+        if feed:
+            self._feed("line" if (line or not self.gh_token) else "info", text)
+        if not line and self.gh_token:
+            return
         today = dt.date.today().isoformat()
         if self.state["day"] != today:
             self.state["day"], self.state["count"] = today, 0
@@ -285,7 +391,8 @@ class Notifier:
         act, at = mag.get("last_action"), mag.get("last_action_at")
         if act and at and at != self.state["last_mag_action"]:
             self.state["last_mag_action"] = at
-            self._push(f"磁浮自動控制 {at[11:16]}\n{act}\n出水 {_f(mag.get('chws_c'), 1)}°C（目標 {_f(mag.get('chws_target'), 1)}）")
+            self._push(f"磁浮自動控制 {at[11:16]}\n{act}\n出水 {_f(mag.get('chws_c'), 1)}°C（目標 {_f(mag.get('chws_target'), 1)}）",
+                       line=False)
 
     def _fault(self, key, bad, msg_bad, msg_ok, now, hold_s):
         faults = self.state["faults"]
@@ -467,7 +574,7 @@ class Notifier:
             if locked:
                 st["state"] = "lock"
                 self._push(f"ℹ️ 磁浮 {e['on']} 排程沒有開機：{oa}\n"
-                           "現場規則「外氣低於門檻冰機不開機」，屬正常。外氣回升後若還沒開會再通知。")
+                           "現場規則「外氣低於門檻冰機不開機」，屬正常。外氣回升後若還沒開會再通知。", line=False)
             else:
                 st["state"] = "alarm"
                 self._push(f"🚨 磁浮排程 {e['on']} 開機，已過 {START_LATE_MIN} 分鐘仍未運轉\n{oa}\n"
@@ -538,8 +645,15 @@ class Notifier:
             lines = r.get("lines") or []
             if isinstance(lines, str):
                 lines = [lines]
-            self._push(f"{head}（{r.get('time', '')[11:16]}，編號 {r.get('id')}）\n" + "\n".join(lines[:12]) +
-                       (f"\n說明：{r['note']}" if r.get("note") else ""), force=True)
+            text = (f"{head}（{r.get('time', '')[11:16]}，編號 {r.get('id')}）\n" + "\n".join(lines[:12]) +
+                    (f"\n說明：{r['note']}" if r.get("note") else ""))
+            src = {"cmd_seen": "sched", "upd_seen_bms": "upd_bms", "upd_seen_ac": "upd_ac"}[seen]
+            quiet = bool(self.gh_token) and r.get("status") in ("done", "dry_run")   # 成功／試跑只寫 GitHub
+            if quiet:
+                self._feed("result", text, src=src, result=r, _line=text)
+            else:
+                self._feed("result", text, src=src, result=r)
+                self._push(text, force=True, feed=False)
 
     def tick(self, now, live_ok, snap, ac, mag, ems):
         if not self.enabled:
@@ -575,6 +689,7 @@ class Notifier:
                 self._start_guard(now, ac)
             self._cmd_result(now)
             self._summary(now, snap, ems, mag)
+            self._flush_feed(now)
             if (now - self.saved_at).total_seconds() >= 300:
                 self.saved_at = now
                 self._save()
