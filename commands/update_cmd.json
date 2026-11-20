@@ -1,14 +1,14 @@
 {
-  "id": "2026-11-19-k32-pr76-oarh",
+  "id": "2026-11-20-k32-pr77-outdoor",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-19T12:34:06+08:00",
-  "expires": "2026-11-19T20:34:06+08:00",
-  "note": "PR #76 外氣溫濕度候選點位記錄（AHU_111_MAU OATEMP/OARH/OAH 等），Cliff 2026-11-19 12:33 執行",
-  "sha": "a33c12ebabbd5a18e785efa98273f2113e28bc71",
+  "approved_at": "2026-11-20T08:19:59+08:00",
+  "expires": "2026-11-20T16:19:59+08:00",
+  "note": "PR #77 即時監控／空調系統圖加入餐廳外溫溼度與濕球、露點、焓值（Cliff 2026-11-20 08:19 執行）",
+  "sha": "19a1f1d42f353be07c412c5a3aaed254a7dcd1be",
   "files": [
     {
-      "pc": "ac",
-      "file": "tools/ac_logger.ps1"
+      "pc": "bms",
+      "file": "index.html"
     }
   ]
 }
