@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-21-ha3-pr78-bmshist-b",
+  "id": "2026-11-21-x1-pr79-linefeed",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-21T07:08:17+08:00",
-  "expires": "2026-11-21T15:08:17+08:00",
-  "note": "PR #78 第2步：監控電腦 hist_export.ps1 換成主線版（Cliff 2026-11-21 07:08 執行）",
-  "sha": "c74c659ac4d58facca110964319a4cb3be770243",
+  "approved_at": "2026-11-21T07:43:19+08:00",
+  "expires": "2026-11-21T15:43:19+08:00",
+  "note": "PR #79：LINE 額度用完，結果與例行通知改寫回 GitHub（ems-feed），LINE 只推告警、失敗與摘要（Cliff 2026-11-21 07:43 執行）",
+  "sha": "1b42773c4c68a49310836a08248730fcfe47b564",
   "files": [
-    { "pc": "bms", "file": "tools/hist_export.ps1" }
+    { "pc": "bms", "file": "tools/line_push.py" }
   ]
 }
