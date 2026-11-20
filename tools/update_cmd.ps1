@@ -39,6 +39,7 @@ $ALLOW = @{
     'tools/circuit_export.py' = @{ to = 'circuit_export.py'; task = '' }
     'index.html'              = @{ to = 'site\index.html';   task = '' }
     'circuit_test.html'       = @{ to = 'site\circuit_test.html'; task = '' }
+    'tools/hist_export.ps1'   = @{ to = 'hist_export.ps1';   task = '' }   # 2026-11-21 監控電腦匯出歷史（circuit_export 讀 bms_hist.json 叫用）
     'tools/update_cmd.ps1'    = @{ to = 'update_cmd.ps1';    task = '' }
   }
 }
