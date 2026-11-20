@@ -1,14 +1,12 @@
 {
-  "id": "2026-11-20-k32-pr77-outdoor",
+  "id": "2026-11-21-ha3-pr78-bmshist-a",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-20T08:19:59+08:00",
-  "expires": "2026-11-20T16:19:59+08:00",
-  "note": "PR #77 即時監控／空調系統圖加入餐廳外溫溼度與濕球、露點、焓值（Cliff 2026-11-20 08:19 執行）",
-  "sha": "19a1f1d42f353be07c412c5a3aaed254a7dcd1be",
+  "approved_at": "2026-11-21T07:08:17+08:00",
+  "expires": "2026-11-21T15:08:17+08:00",
+  "note": "PR #78 監控電腦遠端匯出歷史 第1步：update_cmd.ps1（可更新 hist_export）＋ circuit_export.py（Cliff 2026-11-21 07:08 執行）",
+  "sha": "c74c659ac4d58facca110964319a4cb3be770243",
   "files": [
-    {
-      "pc": "bms",
-      "file": "index.html"
-    }
+    { "pc": "bms", "file": "tools/update_cmd.ps1" },
+    { "pc": "bms", "file": "tools/circuit_export.py" }
   ]
 }
