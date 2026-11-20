@@ -430,6 +430,16 @@
             if (currentTab === 'RT') updateRT();
             if (currentTab === 'SYS') updateSYS();
         }
+        // 外氣（餐廳外 AHU_111_MAU 溫溼度計，2026-11-19 確認在戶外屋簷下）→ 濕球、露點、焓值（海平面 101.325 kPa）
+        function oaPsy(pl) {
+            const n = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+            const t = n(pl && pl.AHU_111_MAU_OATEMP), rh = n(pl && pl.AHU_111_MAU_OARH);
+            if (t == null || rh == null || t === 0 || t < -10 || t > 45 || rh <= 1 || rh > 100) return null;
+            const pws = 0.61094 * Math.exp(17.625 * t / (t + 243.04)), pv = rh / 100 * pws, g = Math.log(pv / 0.61094);
+            const td = 243.04 * g / (17.625 - g), w = 0.622 * pv / (101.325 - pv), h = 1.006 * t + w * (2501 + 1.86 * t);
+            const tw = t * Math.atan(0.151977 * Math.sqrt(rh + 8.313659)) + Math.atan(t + rh) - Math.atan(rh - 1.676331) + 0.00391838 * Math.pow(rh, 1.5) * Math.atan(0.023101 * rh) - 4.686035;
+            return { t, rh, tw, td, h };
+        }
         function rtRow(label, id, unit = '') {
             return `<div class="flex justify-between text-sm py-1 border-b border-slate-700/50"><span class="text-slate-300">${label}</span><span class="font-mono text-white"><span id="${id}">—</span>${unit ? ' ' + unit : ''}</span></div>`;
         }
@@ -488,7 +498,7 @@
                 <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-slate-400 border-b border-slate-700"><th class="pb-2">樓層</th><th class="pb-2">區域／設備</th><th class="pb-2 text-right">供水</th><th class="pb-2 text-right">回水</th><th class="pb-2 text-right">溫差</th><th class="pb-2 text-right">流量 m³/h</th></tr></thead><tbody id="rt-zones"></tbody></table></div></div>
             <div class="col-span-full glass-card p-5"><h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-temperature-half mr-2 text-orange-300"></i>外氣與小型送風機（FCU）</h3>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div>${rtRow('外氣溫度', 'rt-oat', '°C')}${rtRow('外氣相對溼度', 'rt-oah', '%')}${rtRow('送風機運轉台數', 'rt-fcuon')}${rtRow('平均室溫（運轉中）', 'rt-tin', '°C')}${rtRow('平均設定溫度（運轉中）', 'rt-tset', '°C')}
+                    <div>${rtRow('外氣溫度', 'rt-oat', '°C')}${rtRow('外氣相對溼度', 'rt-oah', '%')}${rtRow('外氣濕球／露點', 'rt-owb', '°C')}${rtRow('外氣焓值', 'rt-oent', 'kJ/kg')}${rtRow('送風機運轉台數', 'rt-fcuon')}${rtRow('平均室溫（運轉中）', 'rt-tin', '°C')}${rtRow('平均設定溫度（運轉中）', 'rt-tset', '°C')}
                         <p class="text-xs mt-2" id="rt-fcunote"></p></div>
                     <div class="lg:col-span-2"><p class="text-xs text-slate-400 mb-1">今天每 15 分鐘：外氣溫度（°C）、送風機運轉台數、磁浮平均負載（%）</p><div class="h-48"><canvas id="rtFcu"></canvas></div></div>
                 </div>
@@ -705,11 +715,12 @@
                 .sys-fan{display:inline-block}.sys-ahu-run .sys-fan{animation:sysspin 1.2s linear infinite;color:#34d399}
             </style>
             <div class="col-span-full flex flex-wrap justify-between items-center gap-2 text-sm"><span id="sys-status" class="font-mono text-slate-400">連線中…</span><span class="text-xs text-slate-500">只讀，不寫入任何點位・空調監控主機每分鐘更新</span></div>
-            <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+            <div class="col-span-full grid grid-cols-2 lg:grid-cols-5 gap-4 md:gap-6">
                 <div class="glass-card p-5 border-l-4 border-l-sky-400"><p class="text-slate-400 text-sm">冰水負荷（重新計算）</p><p class="text-3xl font-bold text-white font-mono"><span id="sys-rt">—</span><span class="text-sm font-normal text-slate-400 ml-1">RT</span></p><p class="text-xs text-slate-400 mt-1" id="sys-rt-sub"></p></div>
                 <div class="glass-card p-5 border-l-4 border-l-emerald-400"><p class="text-slate-400 text-sm">磁浮 COP（重新計算）</p><p class="text-3xl font-bold text-white font-mono"><span id="sys-cop">—</span></p><p class="text-xs text-slate-400 mt-1" id="sys-cop-sub"></p></div>
-                <div class="glass-card p-5 border-l-4 border-l-violet-400"><p class="text-slate-400 text-sm">冰桶液位 01／02</p><p class="text-3xl font-bold text-white font-mono"><span id="sys-ice">—</span><span class="text-sm font-normal text-slate-400 ml-1">%</span></p><p class="text-xs text-slate-400 mt-1" id="sys-ice-sub"></p></div>
+                <div class="glass-card p-5 border-l-4 border-l-violet-400"><p class="text-slate-400 text-sm">冰桶液位 01／15</p><p class="text-3xl font-bold text-white font-mono"><span id="sys-ice">—</span><span class="text-sm font-normal text-slate-400 ml-1">%</span></p><p class="text-xs text-slate-400 mt-1" id="sys-ice-sub"></p></div>
                 <div class="glass-card p-5 border-l-4 border-l-amber-400"><p class="text-slate-400 text-sm">運轉中設備</p><p class="text-3xl font-bold text-white font-mono"><span id="sys-run">—</span></p><p class="text-xs text-slate-400 mt-1" id="sys-run-sub"></p></div>
+                <div class="glass-card p-5 border-l-4 border-l-orange-300"><p class="text-slate-400 text-sm">外氣（餐廳外）</p><p class="text-3xl font-bold text-white font-mono"><span id="sys-oa">—</span></p><p class="text-xs text-slate-400 mt-1" id="sys-oa-sub"></p></div>
             </div>
             <div class="col-span-full glass-card p-4 md:p-5"><h3 class="text-lg font-bold text-white mb-2"><i class="fa-solid fa-diagram-project mr-2 text-sky-400"></i>中央空調系統圖</h3>
                 <div class="overflow-x-auto">${sysSvg()}</div>
@@ -739,6 +750,12 @@
             rtSet('sys-status', a.viewer_ok === 0 ? '<span class="text-red-400">空調監控主機的 WindowViewer 沒開，讀不到點位</span>'
                 : age > 5 ? `<span class="text-amber-300">空調資料 ${Math.round(age)} 分鐘沒更新（${a.time.slice(11, 16)}）</span>`
                 : `<i class="fa-solid fa-circle text-emerald-400 mr-1 text-xs"></i>空調資料 ${a.time.slice(11, 16)}${noPlant ? '・<span class="text-amber-300">泵浦／水塔狀態還沒開始記錄（請更新空調監控主機的 ac_logger.ps1）</span>' : ''}`);
+            // 外氣：餐廳外溫溼度計 → 濕球／露點／焓值；冷卻水供水減濕球＝水塔趨近溫度；大廳 CHU1_OAH 是磁浮開機門檻用的
+            const oa = oaPsy(pl), cws = sysNum(a.mag_cws_c), lob = sysNum(a.oat_c), lsp = sysNum(a.oat_sp_c);
+            rtSet('sys-oa', oa ? `${fmt(oa.t, 1)}<span class="text-sm font-normal text-slate-400">°C</span> ${fmt(oa.rh, 0)}<span class="text-sm font-normal text-slate-400">%</span>` : '—');
+            rtSet('sys-oa-sub', (oa ? `濕球 ${fmt(oa.tw, 1)}・露點 ${fmt(oa.td, 1)} °C・焓值 ${fmt(oa.h, 1)} kJ/kg` : '餐廳外溫溼度計讀不到')
+                + (oa && cws != null && cws > 0 ? `<br>冷卻水供水 ${fmt(cws, 1)} °C，比濕球高 ${fmt(cws - oa.tw, 1)} °C（趨近）` : '')
+                + (lob != null ? `<br>大廳外氣 ${fmt(lob, 1)} °C（磁浮開機門檻 ${fmt(lsp, 1)} °C${a.oat_locked ? '，<span class="text-amber-300">低於門檻不開機</span>' : ''}）` : ''));
             // 泵浦、水塔
             const pumps = [...[1, 2, 3, 4, 5, 6].map(n => 'CHP' + n), ...[1, 2, 3, 4, 5, 6, 7, 8].map(n => 'CWP' + n), ...[1, 2, 3, 4, 5].map(n => 'SCHP' + n), ...[1, 2, 3, 4, 5, 6].map(n => 'BP' + n)];
             const on = {}; let nRun = 0; const runList = [];
@@ -1028,9 +1045,11 @@
         function updateFcu(d, chart) {
             const f = d.fcu;
             if (!f) { rtSet('rt-fcunote', '<span class="text-amber-300">還沒有送風機資料（空調監控主機每 5 分鐘記錄一次）</span>'); return; }
-            rtSet('rt-oat', fmt(f.oat_c, 1)); rtSet('rt-oah', fmt(f.oah_pct, 0));
+            const oa = oaPsy(rt && rt.ac && rt.ac.plant);
+            rtSet('rt-oat', fmt(oa ? oa.t : f.oat_c, 1)); rtSet('rt-oah', fmt(oa ? oa.rh : f.oah_pct, 0));
+            rtSet('rt-owb', oa ? `${fmt(oa.tw, 1)}／${fmt(oa.td, 1)}` : '—'); rtSet('rt-oent', oa ? fmt(oa.h, 1) : '—');
             rtSet('rt-fcuon', `${f.on}／${f.n} 台`); rtSet('rt-tin', fmt(f.room_t_on_c, 1)); rtSet('rt-tset', fmt(f.set_t_on_c, 1));
-            rtSet('rt-fcunote', f.age_min > 15 ? `<span class="text-amber-300">送風機資料 ${f.age_min} 分鐘沒更新</span>` : `<span class="text-slate-500">資料時間 ${f.time.slice(6)}・外氣取 ${f.oat_sensors} 個 AHU 感測器的中位數</span>`);
+            rtSet('rt-fcunote', f.age_min > 15 ? `<span class="text-amber-300">送風機資料 ${f.age_min} 分鐘沒更新</span>` : `<span class="text-slate-500">資料時間 ${f.time.slice(6)}・${oa ? '外氣取餐廳外溫溼度計（AHU_111_MAU，戶外），濕球、露點、焓值由溫溼度換算' : `外氣取 ${f.oat_sensors} 個 AHU 感測器的中位數（餐廳外溫溼度計讀不到）`}</span>`);
             const sr = f.series || {}, ac = (d.ac && d.ac.series) || {};
             const magAt = {}; (ac.times || []).forEach((t, i) => magAt[t] = ac.mag_pct[i]);
             chart.data.labels = sr.times || [];
