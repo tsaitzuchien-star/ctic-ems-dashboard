@@ -130,7 +130,14 @@ if ($Merge) {
 }
 
 Ensure-HistData
-if (-not [CticHist]::Open('HistData', 'Tagname')) { throw '連不上 HistData（DDE HistData|Tagname）' }
+# 2026-11-21：剛開的 HistData 5 秒內常常還接不上 DDE → 最多再等 90 秒，每 5 秒試一次
+$opened = $false
+for ($k = 0; $k -lt 19; $k++) {
+  if ([CticHist]::Open('HistData', 'Tagname')) { $opened = $true; break }
+  [CticHist]::Close(); Start-Sleep -Seconds 5
+  if ($k -eq 6) { Ensure-HistData }
+}
+if (-not $opened) { throw '連不上 HistData（DDE HistData|Tagname），等了 90 秒' }
 try {
   $items = 'DBDir', 'DataDir', 'Tags', 'StartDate', 'StartTime', 'Duration', 'Interval', 'FileName', 'WriteFile', 'Error'
   if ($Probe) {
