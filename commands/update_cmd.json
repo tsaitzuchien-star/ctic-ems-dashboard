@@ -1,11 +1,12 @@
 {
-  "id": "2026-11-21-ha3-pr80-histtask",
+  "id": "2026-11-21-ha3-pr81-histdde",
   "requested_by": "Cliff Tsai",
   "approved_at": "2026-11-21T21:35:03+08:00",
   "expires": "2026-11-22T05:35:03+08:00",
-  "note": "PR #80：監控電腦歷史匯出改用獨立排程 CTIC_Hist_Export（第一次背景子程序被排程收掉；Cliff 2026-11-21 21:35「你可以再試一下嗎」）",
-  "sha": "0feaf41de4e770e909b61e99a3086115510294ab",
+  "note": "PR #81：歷史匯出等 HistData 最多 90 秒再接 DDE、不再關掉 histdata（22:01 重跑連不上 HistData；Cliff 2026-11-21 21:35「你可以再試一下嗎」）",
+  "sha": "f93940fbda3f1c3b700d59263b28ce6f471ca4a5",
   "files": [
+    { "pc": "bms", "file": "tools/hist_export.ps1" },
     { "pc": "bms", "file": "tools/circuit_export.py" }
   ]
 }
