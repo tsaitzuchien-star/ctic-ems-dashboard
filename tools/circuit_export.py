@@ -147,6 +147,7 @@ def _fetch_text(url):
 
 def check_hist_command(out_dir):
     """有新的匯出歷史指令就在背景開始跑；任何問題只記 log，不影響迴路匯出。"""
+    import base64
     import json
     import subprocess
     try:
@@ -197,18 +198,48 @@ def check_hist_command(out_dir):
         return
     hlog = os.path.join(out_dir, f"hist_{hset}.log")
     tags = ",".join(HIST_SETS[hset])
-    ps = (f"$ErrorActionPreference='Continue'; New-Item -ItemType File -Force '{lock}' | Out-Null; "
-          f"try {{ & '{script}' -Start {start:%Y-%m-%d} -End {end:%Y-%m-%d} -Prefix {hset} -Tags {tags}; "
-          f"& '{script}' -Merge -Prefix {hset} }} finally {{ Remove-Item '{lock}' -ErrorAction SilentlyContinue; "
-          f"'完成 ' + (Get-Date -f 'yyyy-MM-dd HH:mm') }}")
+    # 2026-11-21 第一次（07:31）用子程序在背景跑，log 只有「開始」一行、沒有日檔進度、沒有合併檔：
+    # 排程（工作排程器）結束時會把它開的子程序一起收掉，所以匯出其實沒跑。
+    # 改成：寫一支包裝腳本，另外註冊一個自己的排程 CTIC_Hist_Export（目前使用者、互動登入、最長 8 小時）去跑，
+    # 每一行進度用 Add-Content 寫進雲端 log（每行開關一次檔案，雲端才會同步），跑完自動合併。
+    runner = os.path.join(HERE, f"hist_run_{hset}.ps1")
+    body = "\r\n".join([
+        "$ErrorActionPreference = 'Continue'",
+        f"$log = '{hlog}'",
+        "function L($m) { try { Add-Content -LiteralPath $log -Value $m -Encoding UTF8 } catch {} }",
+        f"New-Item -ItemType File -Force '{lock}' | Out-Null",
+        "Get-Process -Name histdata -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+        "L ((Get-Date -f 'yyyy-MM-dd HH:mm') + ' 排程已啟動，開始逐日匯出')",
+        "try {",
+        f"  & '{script}' -Start {start:%Y-%m-%d} -End {end:%Y-%m-%d} -Prefix {hset} -Tags {tags} *>&1 | ForEach-Object {{ L (\"$_\") }}",
+        f"  & '{script}' -Merge -Prefix {hset} *>&1 | ForEach-Object {{ L (\"$_\") }}",
+        "} catch { L ('錯誤：' + $_) } finally {",
+        f"  Remove-Item '{lock}' -ErrorAction SilentlyContinue",
+        "  L ('完成 ' + (Get-Date -f 'yyyy-MM-dd HH:mm'))",
+        "}",
+    ]) + "\r\n"
+    with open(runner, "w", encoding="utf-8-sig") as f:      # PowerShell 5.1 要 BOM 才讀得懂中文
+        f.write(body)
+    reg = "\r\n".join([
+        "$ErrorActionPreference = 'Stop'",
+        f"$a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{runner}\"' -WorkingDirectory '{HERE}'",
+        "$p = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive",
+        "$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 8) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew",
+        "Register-ScheduledTask -TaskName 'CTIC_Hist_Export' -Action $a -Principal $p -Settings $s -Force | Out-Null",
+        "Start-ScheduledTask -TaskName 'CTIC_Hist_Export'",
+        "'ok'",
+    ])
     with open(hlog, "a", encoding="utf-8") as f:
-        f.write(f"{dt.datetime.now():%Y-%m-%d %H:%M} 開始 {cid} set={hset} {start}~{end}\n")
+        f.write(f"{dt.datetime.now():%Y-%m-%d %H:%M} 開始 {cid} set={hset} {start}~{end}（用排程 CTIC_Hist_Export 跑）\n")
     try:
-        lf = open(hlog, "a", encoding="utf-8")
-        subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
-                         stdout=lf, stderr=subprocess.STDOUT, cwd=HERE,
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0))
+        enc = base64.b64encode(reg.encode("utf-16-le")).decode()
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc],
+                           capture_output=True, timeout=60)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.decode("utf-8", "replace").strip()[:300])
     except Exception as e:
+        with open(hlog, "a", encoding="utf-8") as f:
+            f.write(f"{dt.datetime.now():%Y-%m-%d %H:%M} 啟動排程失敗：{e}\n")
         return finish(f"failed to start: {e}")
     finish(f"started {hset} {start}~{end} -> {hlog}")
 
