@@ -1,11 +1,11 @@
 {
-  "id": "2026-11-21-x1-pr79-linefeed",
+  "id": "2026-11-21-ha3-pr80-histtask",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-21T07:43:19+08:00",
-  "expires": "2026-11-21T15:43:19+08:00",
-  "note": "PR #79：LINE 額度用完，結果與例行通知改寫回 GitHub（ems-feed），LINE 只推告警、失敗與摘要（Cliff 2026-11-21 07:43 執行）",
-  "sha": "1b42773c4c68a49310836a08248730fcfe47b564",
+  "approved_at": "2026-11-21T21:35:03+08:00",
+  "expires": "2026-11-22T05:35:03+08:00",
+  "note": "PR #80：監控電腦歷史匯出改用獨立排程 CTIC_Hist_Export（第一次背景子程序被排程收掉；Cliff 2026-11-21 21:35「你可以再試一下嗎」）",
+  "sha": "0feaf41de4e770e909b61e99a3086115510294ab",
   "files": [
-    { "pc": "bms", "file": "tools/line_push.py" }
+    { "pc": "bms", "file": "tools/circuit_export.py" }
   ]
 }
