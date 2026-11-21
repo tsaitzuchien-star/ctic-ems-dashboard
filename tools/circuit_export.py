@@ -208,7 +208,6 @@ def check_hist_command(out_dir):
         f"$log = '{hlog}'",
         "function L($m) { try { Add-Content -LiteralPath $log -Value $m -Encoding UTF8 } catch {} }",
         f"New-Item -ItemType File -Force '{lock}' | Out-Null",
-        "Get-Process -Name histdata -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
         "L ((Get-Date -f 'yyyy-MM-dd HH:mm') + ' 排程已啟動，開始逐日匯出')",
         "try {",
         f"  & '{script}' -Start {start:%Y-%m-%d} -End {end:%Y-%m-%d} -Prefix {hset} -Tags {tags} *>&1 | ForEach-Object {{ L (\"$_\") }}",
