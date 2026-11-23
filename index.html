@@ -1215,6 +1215,7 @@
                 ${kwTile('本月最高使用率', monthTop ? fmt(monthTop.max) : '—', monthTop ? `${monthTop.at}・${monthTop.period}契約 ${fmt(monthTop.limit)}（${fmt(monthTop.pct, 1)}%）` : '尚無資料', 'border-l-amber-400', monthTop && monthTop.pct >= 100 ? 'text-red-400' : 'text-white')}
                 ${kwTile(`${yr} 年最高`, yearRow ? fmt(yearRow.max) : '—', yearRow ? `${yearRow.at}・${yearRow.period}契約 ${fmt(yearRow.limit)}・超約 ${yearRow.nover} 次` : '尚無資料', 'border-l-rose-400')}
             </div>
+            ${tpForecastCard(T.forecast_check)}
             <div class="col-span-full glass-card p-5">
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
                     <h3 class="text-lg font-bold text-white"><i class="fa-solid fa-chart-area mr-2 text-violet-400"></i>單日需量與契約容量</h3>
@@ -1251,6 +1252,51 @@
             <p class="col-span-full text-xs text-slate-500 -mt-2">資料來源：台電「高壓用戶用電資訊」網頁（電號 17242350005），${T.first.slice(0, 10)} 起。台電計費表約比本站總表電表高 3–4 kW、比 BMS 畫面高約 13–14 kW（2023-11～2026-11 共 98,590 筆比對），超約以台電為準。少數日子台電網頁本身就缺資料（例如 2024-10-05、2026-04-25），缺的時段留白不補。</p>`;
             tpDrawDay();
             tpDrawYears();
+            tpDrawFc(T.forecast_check);
+        }
+
+        // 昨天預測 vs 台電實際：每天 17:47 的隔日逐時預測（BMS 基準＋offset）對台電計費表
+        function tpForecastCard(fc) {
+            if (!fc || !fc.days || !fc.days.length) return `<div class="col-span-full glass-card p-4 text-sm text-slate-400"><i class="fa-solid fa-scale-balanced mr-2 text-cyan-400"></i>預測 vs 台電實際：還沒有可比對的日子（需要前一天的逐時預測和當天完整的台電資料）</div>`;
+            const last = fc.days.find(o => o.hours) || fc.days[fc.days.length - 1], S = fc.work_summary;   // 逐時明細那一天（最近一個上班日）
+            const errCls = e => Math.abs(e) <= 15 ? 'text-emerald-400' : Math.abs(e) <= 30 ? 'text-amber-300' : 'text-red-400';
+            const rows = fc.days.slice().reverse().map(o => [
+                `${o.date.slice(5)}（${tpWk(o.date)}）${o.work === false ? '<span class="text-xs text-slate-500 ml-1">假日</span>' : ''}`,
+                `${fmt(o.pred)}<span class="text-xs text-slate-500 ml-1">${o.pred_hour}</span>`,
+                `${fmt(o.actual)}<span class="text-xs text-slate-500 ml-1">${o.actual_end}</span>`,
+                `<span class="${errCls(o.err)}">${o.err > 0 ? '+' : ''}${fmt(o.err, 1)}</span>`,
+                `${o.pct > 0 ? '+' : ''}${fmt(o.pct, 1)}%`]);
+            return `<div class="col-span-full grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div class="glass-card p-5 border-l-4 border-l-cyan-400">
+                    <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-scale-balanced mr-2 text-cyan-400"></i>預測 vs 台電實際（${last.date.slice(5)}，${tpWk(last.date)}）</h3>
+                    <p class="text-xs text-slate-400 mb-3">前一天 17:47 發布的逐時預測，加 ${fmt(fc.offset)} kW 換成台電基準；長條＝台電每小時最大 15 分鐘需量。</p>
+                    <div class="grid grid-cols-3 gap-3 text-sm mb-3">
+                        <div><div class="text-slate-400">預測最高</div><div class="text-2xl font-mono text-white">${fmt(last.pred)}</div><div class="text-xs text-slate-500">${last.pred_hour} 那一小時</div></div>
+                        <div><div class="text-slate-400">台電實際最高</div><div class="text-2xl font-mono text-white">${fmt(last.actual)}</div><div class="text-xs text-slate-500">${last.actual_end} 結束</div></div>
+                        <div><div class="text-slate-400">誤差（實際−預測）</div><div class="text-2xl font-mono ${errCls(last.err)}">${last.err > 0 ? '+' : ''}${fmt(last.err, 1)}</div><div class="text-xs text-slate-500">${last.pct > 0 ? '+' : ''}${fmt(last.pct, 1)}%${last.err > 0 ? '（低估）' : last.err < 0 ? '（高估）' : ''}</div></div>
+                    </div>
+                    <div class="h-72"><canvas id="tpFcChart"></canvas></div>
+                </div>
+                ${emTable('最近每日最高需量：預測 vs 台電', 'fa-solid fa-list-check', 'text-cyan-400',
+                    S ? `上班日 ${S.days} 天：平均誤差 ${fmt(S.mae, 1)} kW、平均偏差 ${S.bias > 0 ? '+' : ''}${fmt(S.bias, 1)} kW（正＝低估）、平均誤差率 ${fmt(S.mape, 1)}%、誤差在 ±5% 內 ${S.within5} 天。綠 ≤15 kW、黃 ≤30 kW、紅 >30 kW。` : '尚無上班日資料',
+                    ['日期', '預測最高', '台電實際', '誤差 kW', '誤差率'], rows, '尚無資料')}
+            </div>`;
+        }
+
+        function tpDrawFc(fc) {
+            const el = document.getElementById('tpFcChart');
+            if (!el || !fc || !fc.days.length) return;
+            const o = fc.days.find(x => x.hours);
+            if (!o) return;
+            liveCharts.push(new Chart(el, {
+                data: { labels: o.hours, datasets: [
+                    { type: 'bar', label: '台電實際（每小時最大）', data: o.actual_h, backgroundColor: 'rgba(167,139,250,0.55)', borderRadius: 4, order: 2 },
+                    { type: 'line', label: '前一天預測', data: o.pred_h, borderColor: '#22d3ee', backgroundColor: '#22d3ee', borderWidth: 2.5, pointRadius: 2, tension: 0.2, order: 1 },
+                ] },
+                options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                           scales: { y: { beginAtZero: true, title: { display: true, text: 'kW' }, grid: { color: 'rgba(148,163,184,0.12)' } }, x: { grid: { display: false } } },
+                           plugins: { legend: { labels: { boxWidth: 14 } } } },
+            }));
         }
 
         function tpPick(iso) {
