@@ -452,7 +452,7 @@
         function renderRT(container) {
             rtCharts.forEach(c => c.destroy()); rtCharts = [];
             container.innerHTML = `
-            <div class="col-span-full flex flex-wrap justify-between items-center gap-2 text-sm"><span id="rt-status" class="font-mono text-slate-400">連線中…</span><span class="text-xs text-slate-500">數字為台電基準（BMS＋10 kW）・每 5 秒更新・資料直接讀監控電腦 InTouch 與空調監控主機</span></div>
+            <div class="col-span-full flex flex-wrap justify-between items-center gap-2 text-sm"><span id="rt-status" class="font-mono text-slate-400">連線中…</span><span class="text-xs text-slate-500">數字為台電基準（BMS＋14 kW）・每 5 秒更新・資料直接讀監控電腦 InTouch 與空調監控主機</span></div>
             <div class="col-span-full grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 <div id="rt-c1" class="glass-card p-5 border-l-4 border-l-blue-400"><p class="text-slate-400 text-sm">總電表瞬時</p><p class="text-3xl font-bold text-white font-mono"><span id="rt-now">—</span><span class="text-sm font-normal text-slate-400 ml-1">kW</span></p><p class="text-xs text-slate-400 mt-1" id="rt-now-sub"></p></div>
                 <div id="rt-c2" class="glass-card p-5 border-l-4 border-l-emerald-400"><p class="text-slate-400 text-sm">本時段 15 分鐘需量推估</p><p class="text-3xl font-bold text-white font-mono"><span id="rt-proj">—</span><span class="text-sm font-normal text-slate-400 ml-1">kW</span></p><p class="text-xs text-slate-400 mt-1" id="rt-proj-sub"></p><div class="w-full h-2 bg-slate-700 rounded-full overflow-hidden mt-2"><div id="rt-proj-bar" class="h-2 rounded-full" style="width:0%"></div></div></div>
@@ -1630,7 +1630,7 @@
             </div>
             <div class="col-span-full glass-card p-5">
                 <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-file-invoice-dollar mr-2 text-violet-300"></i>台電帳單：各時段最高需量與契約容量</h3>
-                <p class="text-xs text-slate-400 mb-3">${bill.source}。虛線是現行契約（尖峰 ${C['尖峰']}、半尖峰 ${C['半尖峰']}、週六半尖峰與離峰 ${C['離峰']} kW）。台電電表比 BMS 畫面高約 10 kW。</p>
+                <p class="text-xs text-slate-400 mb-3">${bill.source}。虛線是現行契約（尖峰 ${C['尖峰']}、半尖峰 ${C['半尖峰']}、週六半尖峰與離峰 ${C['離峰']} kW）。台電計費表比 BMS 畫面高約 14 kW。</p>
                 <div class="h-72"><canvas id="emBill"></canvas></div>
             </div>
             <div class="col-span-full grid grid-cols-1 xl:grid-cols-2 gap-6">
