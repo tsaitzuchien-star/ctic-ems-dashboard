@@ -1082,11 +1082,12 @@
                 <div class="flex justify-between text-sm mb-2"><span class="text-slate-300">契約容量使用率（${d.period}）</span><span class="font-mono text-white">${pct.toFixed(0)}%</span></div>
                 <div class="w-full h-3 bg-slate-700 rounded-full overflow-hidden"><div class="${barColor} h-3 rounded-full" style="width:${pct}%"></div></div>
             </div>
+            ${taipowerSection(d)}
             ${pvSection(d)}
             ${usageSection(d)}
             <div class="col-span-full glass-card p-5">
                 <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-chart-line mr-2 text-blue-400"></i>今日 15 分鐘需量</h3>
-                <p class="text-xs text-slate-400 mb-3">藍線：總表實測（向台電購電）；黃色虛線：預測系統的逐時預測；綠色：太陽能發電；紅線：當時段契約上限</p>
+                <p class="text-xs text-slate-400 mb-3">藍線：總表實測（向台電購電）；紫線：台電計費表官方值（約晚 20–25 分鐘）；黃色虛線：預測系統的逐時預測；綠色：太陽能發電；紅線：當時段契約上限</p>
                 <div class="h-72"><canvas id="liveTotal"></canvas></div>
             </div>
             <div class="col-span-full grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1107,6 +1108,27 @@
             </div>
             </div>`;
             drawLiveCharts(d);
+        }
+
+        // 台電計費表：監控電腦每 15 分鐘登入台電高壓用戶服務網抓的官方 15 分鐘需量（約晚 20–25 分鐘）
+        function taipowerSection(d) {
+            const tp = d.taipower;
+            if (!tp) return `<div class="col-span-full glass-card p-4 text-sm text-slate-400"><i class="fa-solid fa-bolt mr-2 text-violet-400"></i>台電計費表資料尚未取得（監控電腦排程 CTIC_Taipower_Live）</div>`;
+            const margin = tp.last_limit - tp.last_kw;
+            const stale = tp.age_min > 60;
+            return `<div class="col-span-full glass-card p-5 border-l-4 border-l-violet-400">
+                <div class="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+                    <h3 class="text-lg font-bold text-white"><i class="fa-solid fa-bolt mr-2 text-violet-400"></i>台電計費表（官方 15 分鐘需量）</h3>
+                    <span class="text-xs ${stale ? 'text-amber-300' : 'text-slate-400'}">資料至 ${tp.last_end}${stale ? `，已 ${tp.age_min} 分鐘沒有新資料` : '（台電網頁約晚 20–25 分鐘）'}</span>
+                </div>
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                    <div><div class="text-slate-400">最新 15 分鐘</div><div class="text-2xl font-mono text-white">${fmt(tp.last_kw)} <span class="text-sm">kW</span></div><div class="text-slate-400">${tp.last_period}契約 ${fmt(tp.last_limit)}</div></div>
+                    <div><div class="text-slate-400">距契約餘裕</div><div class="text-2xl font-mono ${margin < 50 ? 'text-red-400' : 'text-emerald-400'}">${fmt(margin)} <span class="text-sm">kW</span></div><div class="text-slate-400">90% 告警 ${fmt(tp.last_limit * 0.9)} kW</div></div>
+                    <div><div class="text-slate-400">今日最高（台電）</div><div class="text-2xl font-mono text-white">${fmt(tp.peak_kw)} <span class="text-sm">kW</span></div><div class="text-slate-400">${tp.peak_end}・${tp.peak_period}</div></div>
+                    <div><div class="text-slate-400">今日超約</div><div class="text-2xl font-mono ${tp.over_count ? 'text-red-400' : 'text-emerald-400'}">${tp.over_count} <span class="text-sm">次</span></div><div class="text-slate-400">15 分鐘需量 &gt; 該時段契約</div></div>
+                </div>
+                <p class="text-xs text-slate-500 mt-3">台電計費表約比本站總表電表高 3–4 kW、比 BMS 畫面高約 13–14 kW（2023-11～2026-11 共 98,590 筆比對）。超約以本卡為準。</p>
+            </div>`;
         }
 
         // 太陽能：T-REC 機器人寫入的試算表，4 支電表的累計度數差（太陽能全部在總表後面自用）
@@ -1612,6 +1634,7 @@
                 data: { labels, datasets: [
                     { label: '實測', data: actual, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.15)', fill: true, pointRadius: d.times.length < 8 ? 3 : 0, tension: 0.2 },
                     { label: '預測', data: fc, borderColor: '#fbbf24', borderDash: [6, 4], pointRadius: 2, spanGaps: true },
+                    ...(d.taipower ? [{ label: '台電計費表', data: labels.map(t => { const i = d.taipower.times.indexOf(t); return i >= 0 ? d.taipower.kw[i] : null; }), borderColor: '#a78bfa', pointRadius: 0, borderWidth: 2, tension: 0.2 }] : []),
                     ...(d.pv && d.pv.series ? [{ label: '太陽能', data: labels.map(t => d.pv.series[t] ?? null), borderColor: '#a3e635', backgroundColor: 'rgba(163,230,53,0.15)', fill: true, pointRadius: 0, tension: 0.2 }] : []),
                     { label: '契約上限', data: labels.map(limitAt), borderColor: '#f87171', pointRadius: 0, borderWidth: 1.5, stepped: true }
                 ] },
