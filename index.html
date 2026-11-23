@@ -54,6 +54,7 @@
             <button onclick="switchTab('RT')" id="tab-RT" class="tab-btn hidden px-4 py-2 rounded-lg hover:bg-slate-800 text-rose-400 border border-transparent transition"><i class="fa-solid fa-bolt mr-2"></i>即時監控</button>
             <button onclick="switchTab('SYS')" id="tab-SYS" class="tab-btn hidden px-4 py-2 rounded-lg hover:bg-slate-800 text-cyan-400 border border-transparent transition"><i class="fa-solid fa-diagram-project mr-2"></i>空調系統圖</button>
             <button onclick="switchTab('Live')" id="tab-Live" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-emerald-400 border border-transparent transition"><i class="fa-solid fa-gauge-high mr-2"></i>即時總覽</button>
+            <button onclick="switchTab('TP')" id="tab-TP" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-violet-400 border border-transparent transition"><i class="fa-solid fa-bolt mr-2"></i>台電需量</button>
             <button onclick="switchTab('EM')" id="tab-EM" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-sky-400 border border-transparent transition"><i class="fa-solid fa-magnifying-glass-chart mr-2"></i>能管分析</button>
             <button onclick="switchTab('A')" id="tab-A" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 border border-transparent transition"><i class="fa-solid fa-building mr-2"></i>A棟</button>
             <button onclick="switchTab('B')" id="tab-B" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 border border-transparent transition"><i class="fa-solid fa-building mr-2"></i>B棟</button>
@@ -367,6 +368,7 @@
             if (currentTab === 'SYS') { renderSYS(container); return; }
             if (currentTab === 'Live') { renderLive(container); return; }
             if (currentTab === 'EM') { renderEM(container); return; }
+            if (currentTab === 'TP') { renderTP(container); return; }
 
             let filtered = roomData.filter(r => r.building === currentTab);
             if (query) {
@@ -1111,6 +1113,209 @@
         }
 
         // 台電計費表：監控電腦每 15 分鐘登入台電高壓用戶服務網抓的官方 15 分鐘需量（約晚 20–25 分鐘）
+        // ==========================================
+        // 台電需量分頁：台電計費表 15 分鐘需量（監控電腦每 15 分鐘從台電 HVCS 網頁抓，雲端整理成 taipower.json）
+        // 本機版也讀雲端這份（監控電腦有上網），兩邊顯示一致
+        // ==========================================
+        const TP_URL = "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/taipower.json";
+        const TP_PERIODS = ['尖峰', '半尖峰', '週六半尖峰', '離峰'];
+        const TP_SLOTS = Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, '0')}:${String(i % 4 * 15).padStart(2, '0')}`);
+        let tpData = null, tpErr = null, tpDay = null, tpLoading = false;
+
+        async function fetchTP() {
+            if (tpLoading) return;
+            tpLoading = true;
+            try {
+                const res = await fetch(TP_URL + "?t=" + Date.now(), { cache: "no-store" });
+                if (!res.ok) throw new Error(res.status);
+                tpData = await res.json();
+                tpErr = null;
+            } catch (e) {
+                console.error("台電需量資料讀取失敗:", e);
+                tpErr = String(e.message || e);
+            }
+            tpLoading = false;
+            if (currentTab === 'TP') renderCards();
+        }
+
+        const tpIso = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+        const tpShift = (iso, n) => { const t = new Date(iso + 'T12:00:00'); t.setDate(t.getDate() + n); return tpIso(t); };
+        const tpWk = iso => '日一二三四五六'[new Date(iso + 'T12:00:00').getDay()];
+
+        // 契約段落 [[起始格, kW]] → 96 格；沒資料的格子（例如今天還沒到的時段）用 ref 那天同一格補
+        function tpLimits(day, ref) {
+            const out = Array(96).fill(null);
+            const last = day ? day.kw.reduce((a, v, i) => v != null ? i : a, -1) : -1;
+            if (day) for (const [i0, v] of day.lim) for (let i = i0; i < 96; i++) out[i] = v;
+            if (ref) {
+                const r = tpLimits(ref, null);
+                for (let i = last + 1; i < 96; i++) out[i] = r[i];
+            }
+            return out;
+        }
+
+        function tpPctCls(p) { return p >= 100 ? 'text-red-400 font-bold' : p >= 90 ? 'text-amber-300' : 'text-slate-300'; }
+
+        function renderTP(container) {
+            if (!tpData) {
+                container.innerHTML = tpErr
+                    ? `<div class="col-span-full glass-card p-6 text-slate-300"><i class="fa-solid fa-triangle-exclamation text-amber-400 mr-2"></i>台電需量資料還讀不到（${tpErr}）。雲端每 15 分鐘整理一次，監控電腦排程 CTIC_Taipower_Live 要在跑。</div>`
+                    : `<div class="col-span-full text-center text-slate-500 py-16"><i class="fa-solid fa-spinner fa-spin text-4xl mb-4 block"></i>台電需量資料載入中...</div>`;
+                if (!tpErr) fetchTP();
+                return;
+            }
+            const T = tpData, days = T.days || {};
+            const keys = Object.keys(days).sort();
+            const lastDay = keys[keys.length - 1];
+            if (!tpDay || !days[tpDay]) tpDay = lastDay;
+            const today = days[lastDay];
+            const todayMax = Math.max(...today.kw.filter(v => v != null));
+            const todayIdx = today.kw.indexOf(todayMax);
+            const lastLim = tpLimits(today, null);
+            const todayOver = today.kw.filter((v, i) => v != null && v > lastLim[i]).length;
+            const margin = T.last_limit - T.last_kw;
+            const stale = T.age_min > 60;
+            const ym = lastDay.slice(0, 7), yr = Number(lastDay.slice(0, 4));
+            const monthRows = (T.months || []).filter(m => m.month === ym);
+            const monthTop = monthRows.slice().sort((a, b) => b.pct - a.pct)[0];
+            const yearRow = (T.years || []).find(y => y.year === yr);
+
+            // 月表：最近 13 個月，各時段最高（使用率）
+            const byMonth = {};
+            (T.months || []).forEach(m => { (byMonth[m.month] = byMonth[m.month] || {})[m.period] = m; });
+            const monthKeys = Object.keys(byMonth).sort().reverse().slice(0, 13);
+            const cell = m => m ? `<span class="${tpPctCls(m.pct)}">${fmt(m.max)}</span><span class="text-xs text-slate-500">／${fmt(m.limit)}</span><div class="text-[11px] text-slate-500">${m.at}</div>` : '<span class="text-slate-600">—</span>';
+            const monthTable = monthKeys.map(k => {
+                const r = byMonth[k], all = Object.values(r);
+                const n90 = all.reduce((a, m) => a + m.n90, 0), nov = all.reduce((a, m) => a + m.nover, 0);
+                return `<tr class="border-b border-slate-700/50 align-top"><td class="py-1.5 pr-3 font-bold text-white whitespace-nowrap">${k}</td>${TP_PERIODS.map(p => `<td class="py-1.5 pr-3 text-right font-mono whitespace-nowrap">${cell(r[p])}</td>`).join('')}<td class="py-1.5 pr-3 text-right font-mono ${n90 ? 'text-amber-300' : 'text-slate-500'}">${n90}</td><td class="py-1.5 pr-3 text-right font-mono ${nov ? 'text-red-400 font-bold' : 'text-slate-500'}">${nov}</td></tr>`;
+            }).join('');
+
+            const yearRows = (T.years || []).slice().reverse().map(y => [
+                `${y.year}${y.days < 360 ? `<span class="text-xs text-slate-500 font-normal">（${y.days} 天）</span>` : ''}`,
+                `${y.at}`, `${y.period}`,
+                `<span class="${tpPctCls(y.max / y.limit * 100)}">${fmt(y.max)}</span>`, fmt(y.limit), `${fmt(y.max / y.limit * 100, 1)}%`,
+                `<span class="${y.nover ? 'text-red-400 font-bold' : ''}">${y.nover}</span>`, fmt(y.kwh)]);
+            const overRows = (T.over || []).slice().reverse().map(o => [o.t, o.period, `<span class="text-red-400 font-bold">${fmt(o.kw)}</span>`, fmt(o.limit), `+${fmt(o.kw - o.limit)}`]);
+
+            const kwTile = (label, value, sub, color, valCls = 'text-white') => `<div class="glass-card p-5 border-l-4 ${color}">
+                <p class="text-slate-400 text-xs md:text-sm">${label}</p>
+                <p class="text-2xl md:text-3xl font-bold font-mono ${valCls}">${value}<span class="text-sm font-normal text-slate-400 ml-1">kW</span></p>
+                <p class="text-xs text-slate-400 mt-1">${sub}</p></div>`;
+
+            container.innerHTML = `
+            <div class="col-span-full flex flex-wrap items-baseline justify-between gap-2">
+                <h2 class="text-xl font-bold text-white"><i class="fa-solid fa-bolt mr-2 text-violet-400"></i>台電計費表需量（官方 15 分鐘）</h2>
+                <span class="text-xs ${stale ? 'text-amber-300' : 'text-slate-400'}">資料至 ${T.last_end}${stale ? `，已 ${T.age_min} 分鐘沒有新資料，請確認監控電腦排程 CTIC_Taipower_Live` : '・台電網頁約晚 20–25 分鐘'}・整理於 ${T.updated}</span>
+            </div>
+            <div class="col-span-full grid grid-cols-2 lg:grid-cols-5 gap-4 md:gap-6">
+                ${kwTile('最新 15 分鐘', fmt(T.last_kw), `${T.last_end.slice(11)} 結束・${T.last_period}契約 ${fmt(T.last_limit)}（${fmt(T.last_kw / T.last_limit * 100, 1)}%）`, 'border-l-violet-400')}
+                ${kwTile('距契約餘裕', fmt(margin), `90% 告警線 ${fmt(T.last_limit * T.alert_ratio)} kW`, 'border-l-emerald-400', margin < 0 ? 'text-red-400' : margin < T.last_limit * (1 - T.alert_ratio) ? 'text-amber-300' : 'text-emerald-400')}
+                ${kwTile('今日最高', fmt(todayMax), `${TP_SLOTS[(todayIdx + 1) % 96]} 結束・今日超約 ${todayOver} 次`, 'border-l-sky-400', todayOver ? 'text-red-400' : 'text-white')}
+                ${kwTile('本月最高使用率', monthTop ? fmt(monthTop.max) : '—', monthTop ? `${monthTop.at}・${monthTop.period}契約 ${fmt(monthTop.limit)}（${fmt(monthTop.pct, 1)}%）` : '尚無資料', 'border-l-amber-400', monthTop && monthTop.pct >= 100 ? 'text-red-400' : 'text-white')}
+                ${kwTile(`${yr} 年最高`, yearRow ? fmt(yearRow.max) : '—', yearRow ? `${yearRow.at}・${yearRow.period}契約 ${fmt(yearRow.limit)}・超約 ${yearRow.nover} 次` : '尚無資料', 'border-l-rose-400')}
+            </div>
+            <div class="col-span-full glass-card p-5">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+                    <h3 class="text-lg font-bold text-white"><i class="fa-solid fa-chart-area mr-2 text-violet-400"></i>單日需量與契約容量</h3>
+                    <div class="flex items-center gap-2 text-sm">
+                        <button onclick="tpGo(-1)" class="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200"><i class="fa-solid fa-chevron-left"></i></button>
+                        <input type="date" id="tpDate" value="${tpDay}" min="${keys[0]}" max="${lastDay}" onchange="tpPick(this.value)" class="bg-slate-800 border border-slate-600 rounded-lg px-2 py-1 text-white [color-scheme:dark]">
+                        <span class="text-slate-400">（${tpWk(tpDay)}）</span>
+                        <button onclick="tpGo(1)" class="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200"><i class="fa-solid fa-chevron-right"></i></button>
+                        <button onclick="tpPick('${lastDay}')" class="px-3 py-1 rounded-lg bg-violet-500/20 text-violet-200 hover:bg-violet-500/30">今天</button>
+                    </div>
+                </div>
+                <p class="text-xs text-slate-400 mb-3">紫色＝當天台電 15 分鐘需量（橫軸為區間起點）；紅虛線＝依時段變化的契約容量；黃虛線＝90% 告警線；細線為昨天、上週同日、去年同星期（364 天前）。</p>
+                <div class="h-80 md:h-96"><canvas id="tpDayChart"></canvas></div>
+                <p id="tpDayNote" class="text-xs text-slate-400 mt-2"></p>
+            </div>
+            <div class="col-span-full glass-card p-5">
+                <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-table mr-2 text-amber-400"></i>每月各時段最高需量</h3>
+                <p class="text-xs text-slate-400 mb-3">每格是該月該時段最高 15 分鐘需量／契約容量，下方為結束時間。<span class="text-amber-300">黃色</span>≥ 90%、<span class="text-red-400 font-bold">紅色</span>超約。「≥90%」與「超約」是 15 分鐘筆數。</p>
+                <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-xs text-slate-500 text-left"><th class="pb-2 pr-3">月份</th>${TP_PERIODS.map(p => `<th class="pb-2 pr-3 text-right">${p}</th>`).join('')}<th class="pb-2 pr-3 text-right">≥90%</th><th class="pb-2 pr-3 text-right">超約</th></tr></thead><tbody>${monthTable}</tbody></table></div>
+            </div>
+            <div class="col-span-full grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div class="glass-card p-5">
+                    <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-chart-column mr-2 text-sky-400"></i>各年每月最高需量</h3>
+                    <p class="text-xs text-slate-400 mb-3">每月不分時段的最高 15 分鐘需量，比較各年同月。</p>
+                    <div class="h-80"><canvas id="tpYearChart"></canvas></div>
+                </div>
+                ${emTable('年度比較', 'fa-solid fa-calendar', 'text-rose-400', '年度最高 15 分鐘需量與超約次數。用電量＝15 分鐘需量 × 0.25 小時加總，只是估算，以台電帳單為準；未滿一年的年份會標天數。',
+                    ['年', '最高時間', '時段', '最高 kW', '契約', '使用率', '超約', '估算 kWh'], yearRows, '尚無資料')}
+            </div>
+            <div class="col-span-full">
+                ${emTable(`超約紀錄（共 ${T.over_total} 筆，最新在上）`, 'fa-solid fa-triangle-exclamation', 'text-red-400', '15 分鐘需量超過當時段契約容量的區間，時間為區間結束（同台電網頁）。',
+                    ['結束時間', '時段', '需量 kW', '契約 kW', '超出 kW'], overRows, '資料期間內沒有超約')}
+            </div>
+            <p class="col-span-full text-xs text-slate-500 -mt-2">資料來源：台電「高壓用戶用電資訊」網頁（電號 17242350005），${T.first.slice(0, 10)} 起。台電計費表約比本站總表電表高 3–4 kW、比 BMS 畫面高約 13–14 kW（2023-11～2026-11 共 98,590 筆比對），超約以台電為準。少數日子台電網頁本身就缺資料（例如 2024-10-05、2026-04-25），缺的時段留白不補。</p>`;
+            tpDrawDay();
+            tpDrawYears();
+        }
+
+        function tpPick(iso) {
+            if (!tpData || !tpData.days[iso]) {
+                const n = document.getElementById('tpDayNote');
+                if (n) n.innerHTML = `<span class="text-amber-300">${iso} 沒有逐日資料（網站保留最近約 400 天）。</span>`;
+                return;
+            }
+            tpDay = iso;
+            renderCards();
+        }
+        function tpGo(n) {
+            const keys = Object.keys(tpData.days).sort();
+            const i = keys.indexOf(tpDay) + n;
+            if (i >= 0 && i < keys.length) tpPick(keys[i]);
+        }
+
+        function tpDrawDay() {
+            const el = document.getElementById('tpDayChart');
+            if (!el) return;
+            const days = tpData.days, day = days[tpDay];
+            const ref = days[tpShift(tpDay, -7)] || days[tpShift(tpDay, -14)];
+            const lim = tpLimits(day, ref);
+            const cmp = [['昨天', -1, '#94a3b8'], ['上週同日', -7, '#38bdf8'], ['去年同星期', -364, '#fbbf24']]
+                .map(([l, n, c]) => [l, tpShift(tpDay, n), c]).filter(([, iso]) => days[iso]);
+            const ds = [
+                { label: `${tpDay}（${tpWk(tpDay)}）`, data: day.kw, borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.18)', fill: true, borderWidth: 2.5, pointRadius: 0, tension: 0.2, spanGaps: false, order: 1 },
+                { label: '契約容量', data: lim, borderColor: '#f87171', borderDash: [6, 4], borderWidth: 2, pointRadius: 0, stepped: 'after', fill: false, order: 2 },
+                { label: '90% 告警', data: lim.map(v => v == null ? null : Math.round(v * tpData.alert_ratio)), borderColor: '#fbbf24', borderDash: [3, 3], borderWidth: 1.5, pointRadius: 0, stepped: 'after', fill: false, order: 3 },
+                ...cmp.map(([l, iso, c]) => ({ label: `${l} ${iso.slice(5)}`, data: days[iso].kw, borderColor: c + 'aa', borderWidth: 1.2, borderDash: [2, 2], pointRadius: 0, tension: 0.2, fill: false, order: 4 })),
+            ];
+            liveCharts.push(new Chart(el, {
+                type: 'line', data: { labels: TP_SLOTS, datasets: ds },
+                options: {
+                    responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                    scales: { x: { ticks: { maxTicksLimit: 13, autoSkip: true }, grid: { color: 'rgba(148,163,184,0.08)' } },
+                              y: { beginAtZero: true, title: { display: true, text: 'kW' }, grid: { color: 'rgba(148,163,184,0.12)' } } },
+                    plugins: { legend: { labels: { boxWidth: 14, usePointStyle: true } },
+                               tooltip: { callbacks: { title: it => `${it[0].label}–${TP_SLOTS[(it[0].dataIndex + 1) % 96]}` } } },
+                },
+            }));
+            const vals = day.kw.filter(v => v != null);
+            const mx = Math.max(...vals), mi = day.kw.indexOf(mx);
+            const over = day.kw.filter((v, i) => v != null && lim[i] != null && v > lim[i]).length;
+            const n90 = day.kw.filter((v, i) => v != null && lim[i] != null && v >= lim[i] * tpData.alert_ratio).length;
+            document.getElementById('tpDayNote').innerHTML = `當天最高 <b class="text-white">${fmt(mx)} kW</b>（${TP_SLOTS[mi]}–${TP_SLOTS[(mi + 1) % 96]}，契約 ${fmt(lim[mi])}，${fmt(mx / lim[mi] * 100, 1)}%）・≥90% ${n90} 筆・超約 <b class="${over ? 'text-red-400' : 'text-emerald-400'}">${over}</b> 筆・資料 ${vals.length}/96 筆・${vals.length < 96 ? '已記錄時段' : '全天'}估算 ${fmt(vals.reduce((a, v) => a + v, 0) * 0.25)} kWh`;
+        }
+
+        function tpDrawYears() {
+            const el = document.getElementById('tpYearChart');
+            if (!el) return;
+            const by = {};
+            (tpData.months || []).forEach(m => {
+                const [y, mo] = m.month.split('-').map(Number);
+                (by[y] = by[y] || Array(12).fill(null))[mo - 1] = Math.max(by[y][mo - 1] || 0, m.max);
+            });
+            const ys = Object.keys(by).sort();
+            liveCharts.push(new Chart(el, {
+                type: 'bar',
+                data: { labels: Array.from({ length: 12 }, (_, i) => `${i + 1}月`), datasets: ys.map((y, i) => ({ label: y, data: by[y], backgroundColor: ['#94a3b8', '#38bdf8', '#34d399', '#a78bfa', '#fbbf24'][(i + 5 - ys.length) % 5], borderRadius: 4 })) },
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, title: { display: true, text: 'kW' }, grid: { color: 'rgba(148,163,184,0.12)' } }, x: { grid: { display: false } } },
+                           plugins: { legend: { labels: { boxWidth: 14 } } } },
+            }));
+        }
+
         function taipowerSection(d) {
             const tp = d.taipower;
             if (!tp) return `<div class="col-span-full glass-card p-4 text-sm text-slate-400"><i class="fa-solid fa-bolt mr-2 text-violet-400"></i>台電計費表資料尚未取得（監控電腦排程 CTIC_Taipower_Live）</div>`;
@@ -1676,6 +1881,7 @@
         fetchBill();
         fetchRooms();
         setInterval(fetchRooms, (EMS_LOCAL ? 1 : 5) * 60 * 1000);
+        setInterval(() => { if (currentTab === 'TP') fetchTP(); }, 5 * 60 * 1000);   // 台電需量分頁開著時每 5 分鐘更新
         if (EMS_LOCAL) { fetchRT(); setInterval(fetchRT, 5000); }
 
     </script>
