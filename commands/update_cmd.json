@@ -1,12 +1,11 @@
 {
-  "id": "2026-11-23-b3d-pr83-taipower14",
+  "id": "2026-11-23-b3d-pr84-fccard",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-23T14:12:11+08:00",
-  "expires": "2026-11-23T22:12:11+08:00",
-  "note": "PR #82/#83：台電基準改 BMS＋14 kW（local_live.py）＋戰情室台電需量分頁（index.html）；Cliff 2026-11-23 14:12「執行」",
-  "sha": "62191d2e925c1bf5c3cf48445d0f2fd75ee8c4ca",
+  "approved_at": "2026-11-23T14:42:04+08:00",
+  "expires": "2026-11-23T22:42:04+08:00",
+  "note": "PR #84：台電需量分頁加「預測 vs 台電實際」對照卡（index.html）；Cliff 2026-11-23 14:42「執行」",
+  "sha": "7ee2598762908c8988a6044cfbdb3fc205a0c34b",
   "files": [
-    { "pc": "bms", "file": "tools/local_live.py" },
     { "pc": "bms", "file": "index.html" }
   ]
 }
