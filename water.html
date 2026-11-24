@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中創園區 用水戰情室</title>
+    <script src="https://cdn.tailwindcss.com/3.4.5"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        body { background: linear-gradient(135deg, #0f172a 0%, #0c2a43 100%); color: #e2e8f0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; min-height: 100vh; }
+        .glass-card { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1); }
+        .rng { padding: 2px 10px; border-radius: 8px; background: #1e293b; color: #cbd5e1; font-size: 12px; }
+        .rng.on { background: rgba(34, 211, 238, .2); color: #a5f3fc; }
+        table td, table th { white-space: nowrap; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+<header class="flex flex-col md:flex-row justify-between items-center mb-6 glass-card p-5 gap-3">
+    <div class="flex items-center gap-4">
+        <i class="fa-solid fa-droplet text-4xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)]"></i>
+        <div>
+            <h1 class="text-2xl font-bold tracking-wider text-white">CTIC 中創園區<span class="font-light text-cyan-300"> 用水戰情室</span></h1>
+            <p class="text-xs text-slate-400 mt-1">台水智慧水表（水號 B1801146550）・漏水判讀與用量基線</p>
+        </div>
+    </div>
+    <div class="text-right">
+        <a href="index.html" class="text-sm text-blue-300 hover:text-blue-200"><i class="fa-solid fa-bolt mr-1"></i>回電能戰情室</a>
+        <div id="upd" class="text-xs text-slate-400 mt-1 font-mono">載入中...</div>
+    </div>
+</header>
+<main id="app" class="grid grid-cols-1 gap-6">
+    <div class="text-center text-slate-500 py-16"><i class="fa-solid fa-spinner fa-spin text-4xl mb-4 block"></i>用水資料載入中...</div>
+</main>
+<script>
+const URL_ = window.WATER_URL || "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/ems-live/water.json";
+const WK = "日一二三四五六";
+const fmt = (v, d = 0) => v == null || isNaN(v) ? "—" : Number(v).toLocaleString("zh-TW", { minimumFractionDigits: d, maximumFractionDigits: d });
+const wk = s => WK[new Date(s + "T00:00:00").getDay()];
+const md = s => s.slice(5).replace("-", "/");
+let W = null, range = 90, charts = {};
+
+async function load() {
+    try {
+        const r = await fetch(URL_ + "?t=" + Date.now(), { cache: "no-store" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        W = await r.json();
+        render();
+    } catch (e) {
+        document.getElementById("app").innerHTML = `<div class="glass-card p-6 text-slate-300"><i class="fa-solid fa-triangle-exclamation text-amber-400 mr-2"></i>
+            用水資料還讀不到（${e.message}）。監控電腦排程 CTIC_Water_Live 每天 08:10、14:10 抓台水智慧水表，雲端每 15 分鐘整理一次。</div>`;
+        document.getElementById("upd").textContent = "讀取失敗";
+    }
+}
+
+const LV = {
+    alarm: ["border-red-500/60 bg-red-500/10", "fa-circle-exclamation text-red-400", "text-red-200"],
+    warn: ["border-amber-400/60 bg-amber-400/10", "fa-triangle-exclamation text-amber-300", "text-amber-100"],
+    info: ["border-slate-500/50 bg-slate-500/10", "fa-circle-info text-slate-300", "text-slate-200"],
+};
+
+function tile(label, value, unit, sub, color, cls = "text-white") {
+    return `<div class="glass-card p-5 border-l-4 ${color}">
+        <p class="text-slate-400 text-xs md:text-sm">${label}</p>
+        <p class="text-2xl md:text-3xl font-bold font-mono ${cls}">${value}<span class="text-sm font-normal text-slate-400 ml-1">${unit}</span></p>
+        <p class="text-xs text-slate-400 mt-1">${sub}</p></div>`;
+}
+
+function render() {
+    const S = W.status || {}, B = W.baseline || {};
+    const days = W.days || [];
+    const used = days.filter(d => d.use != null);
+    const last = used[used.length - 1];
+    const lastNight = days.filter(d => d.night != null).slice(-1)[0];
+    document.getElementById("upd").textContent = `整理 ${W.updated}・水表資料至 ${W.data_until || "—"}`;
+
+    const alerts = W.alerts || [];
+    const real = alerts.filter(a => a.level !== "info");
+    const banner = (real.length ? "" : `<div class="glass-card p-4 border border-emerald-500/40 bg-emerald-500/10 flex items-start gap-3">
+            <i class="fa-solid fa-circle-check text-emerald-400 text-xl mt-0.5"></i>
+            <div><p class="font-bold text-emerald-200">目前沒有漏水跡象</p>
+            <p class="text-sm text-slate-300">夜間指針、近 7 天合計、假日用量都在基線內（判讀規則見下方「這個解析度能判什麼」）。</p></div></div>`)
+        + alerts.map(a => { const c = LV[a.level] || LV.info; return `<div class="glass-card p-4 border ${c[0]} flex items-start gap-3">
+            <i class="fa-solid ${c[1]} text-xl mt-0.5"></i><div><p class="font-bold ${c[2]}">${a.title}</p><p class="text-sm text-slate-300">${a.text}</p></div></div>`; }).join("")
+        + (S.outage_notice && !String(S.outage_notice).includes("目前無停水公告") ? `<div class="glass-card p-4 border border-sky-400/50 bg-sky-400/10 flex items-start gap-3">
+            <i class="fa-solid fa-faucet-drip text-sky-300 text-xl mt-0.5"></i><div><p class="font-bold text-sky-100">台水停水公告</p><p class="text-sm text-slate-300">${S.outage_notice}</p></div></div>` : "")
+        + (S.scrape_ok === false ? `<div class="glass-card p-3 border border-slate-500/50 text-sm text-slate-300"><i class="fa-solid fa-plug-circle-xmark mr-2 text-slate-400"></i>
+            最近一次抓取失敗（${S.scraped_at || ""}）：${S.scrape_error || ""}。下次排程會再試。</div>` : "");
+
+    const lastBase = last ? (last.off ? B.off : B.work) : null;
+    const r7 = W.last7, wb = B.week;
+    const r7pct = r7 != null && wb ? (r7 / wb - 1) * 100 : null;
+    const r7cls = r7pct == null ? "text-white" : r7pct > 60 ? "text-red-400" : r7pct > 30 ? "text-amber-300" : "text-emerald-400";
+    const nCls = lastNight && lastNight.night >= 2 ? "text-amber-300" : "text-emerald-400";
+
+    document.getElementById("app").innerHTML = `
+    <div class="grid grid-cols-1 gap-3">${banner}</div>
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 md:gap-6">
+        ${tile(`最近一天 ${last ? md(last.d) + "（" + wk(last.d) + "）" : ""}`, last ? fmt(last.use) : "—", "度",
+            `${last && last.off ? "假日" : "上班日"}基線 ${fmt(lastBase)} 度・台水估算量 ${last ? fmt(last.est) : "—"}`, "border-l-cyan-400")}
+        ${tile("近 7 天合計", fmt(r7), "度", wb ? `基線 ${fmt(wb)} 度（${r7pct >= 0 ? "+" : ""}${fmt(r7pct)}%）` : "基線累積中（需 4 週以上）", "border-l-sky-400", r7cls)}
+        ${tile(`夜間 00–06 時 ${lastNight ? md(lastNight.d) : ""}`, lastNight ? fmt(lastNight.night) : "—", "度",
+            lastNight && lastNight.nm ? "每一段指針都在走，留意是否連續" : "0–1 度屬正常（整數度進位）", "border-l-indigo-400", nCls)}
+        ${tile("本期累積度數", fmt(S.current_period_usage), "度", `現行指針 ${fmt(S.current_reading)}・水表更新 ${S.meter_update_time || "—"}`, "border-l-emerald-400")}
+        ${tile("本期試算水費", S.current_fee != null ? "$" + fmt(S.current_fee) : "—", "元", `上期 $${fmt(S.last_fee)}・下期試算 $${fmt(S.next_fee)}`, "border-l-amber-400")}
+    </div>
+
+    <div class="glass-card p-5">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h3 class="text-lg font-bold text-white"><i class="fa-solid fa-chart-column mr-2 text-cyan-400"></i>每日用水量</h3>
+            <div class="flex gap-1">${[30, 90, 400].map(n => `<button class="rng ${range === n ? "on" : ""}" onclick="range=${n};render()">${n === 400 ? "全部" : n + " 天"}</button>`).join("")}</div>
+        </div>
+        <p class="text-xs text-slate-400 mb-3">日用量＝隔天 00 時指針 − 當天 00 時指針。藍＝上班日、灰＝假日；橘線＝近 7 天平均。受水池一次補約 21–22 度，所以單日會在 ~22 與 ~44 之間跳，看 7 天平均比較準。</p>
+        <div class="h-72"><canvas id="cDay"></canvas></div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div class="glass-card p-5">
+            <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-moon mr-2 text-indigo-300"></i>夜間 00–06 時用水（水塔上游漏水指標）</h3>
+            <p class="text-xs text-slate-400 mb-3">綠＝0–1 度；橘＝≥2 度；紅＝每一段指針都在走（不是一次補水）。連續 3 晚紅色才告警。</p>
+            <div class="h-64"><canvas id="cNight"></canvas></div>
+        </div>
+        <div class="glass-card p-5">
+            <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-calendar-week mr-2 text-sky-300"></i>每週用水（週一至週日）</h3>
+            <p class="text-xs text-slate-400 mb-3">虛線＝7 天基線 ${fmt(wb)} 度；黃線＝+30% 注意、紅線＝+60% 告警。</p>
+            <div class="h-64"><canvas id="cWeek"></canvas></div>
+        </div>
+    </div>
+
+    <div class="glass-card p-5">
+        <h3 class="text-lg font-bold text-white mb-1"><i class="fa-solid fa-scale-balanced mr-2 text-amber-300"></i>同期比較（台水帳單月）</h3>
+        <p class="text-xs text-slate-400 mb-3">帳單月＝用水月＋1（11 月帳單＝10 月用水）。來源：${W.bills_src ? `${W.bills_src.name}（雲端版 ${W.bills_src.modified}）` : "能源資訊統計比較表（讀不到）"}；
+            對外數字以總表 02「四、用水」為準。智慧水表 2026-01 才申裝，逐日去年同期要到 2027 年才有。</p>
+        <div class="h-64"><canvas id="cBill"></canvas></div>
+        <div class="overflow-x-auto mt-4">${billTable()}</div>
+    </div>
+
+    <div class="glass-card p-5">
+        <h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-table mr-2 text-cyan-300"></i>逐日指針明細（最近 45 天）</h3>
+        <div class="overflow-x-auto">${dayTable()}</div>
+    </div>
+
+    <div class="glass-card p-5 border border-cyan-500/30">
+        <h3 class="text-lg font-bold text-white mb-3"><i class="fa-solid fa-ruler mr-2 text-cyan-300"></i>這個解析度能判什麼、不能判什麼</h3>
+        <ul class="list-disc pl-5 space-y-1.5 text-sm text-slate-300">${(W.resolution || []).map(t => `<li>${t}</li>`).join("")}</ul>
+        <h4 class="font-bold text-white mt-4 mb-2 text-sm">告警規則</h4>
+        <ul class="list-disc pl-5 space-y-1 text-sm text-slate-300">${Object.values(W.rules || {}).map(t => `<li>${t}</li>`).join("")}</ul>
+        <p class="text-xs text-slate-500 mt-3">基線（不含最近 7 天）：上班日中位數 ${fmt(B.work)} 度（${B.n_work} 天）、假日中位數 ${fmt(B.off)} 度（${B.n_off} 天）、7 天合計 ${fmt(B.week)} 度（${B.n_week} 個）。
+            新告警推 LINE「中創能管」並記錄到 GitHub（LINE 月額度用完時仍會留 GitHub 紀錄）。</p>
+    </div>
+    <p class="text-xs text-slate-500 text-center">數據截至 ${W.data_until || "—"}・資料：台水水表e管家（監控電腦每天 08:10、14:10 抓取）・水表時刻：${(W.hours || []).map(h => String(h).padStart(2, "0") + " 時").join("、")}</p>`;
+    draw();
+}
+
+function billTable() {
+    const b = W.bills || {}, ys = Object.keys(b).sort();
+    if (!ys.length) return `<p class="text-slate-500 text-sm">讀不到帳單資料。</p>`;
+    const [y0, y1] = [ys[ys.length - 2], ys[ys.length - 1]];
+    const a = b[y0] || [], c = b[y1] || [];
+    let s0 = 0, s1 = 0;
+    const cells = [...Array(12).keys()].map(i => {
+        if (a[i] != null && c[i] != null) { s0 += a[i]; s1 += c[i]; }
+        const p = a[i] && c[i] != null ? (c[i] / a[i] - 1) * 100 : null;
+        return `<td class="px-2 py-1 text-right font-mono">${fmt(a[i])}<br><span class="text-white">${fmt(c[i])}</span><br>
+            <span class="${p == null ? "text-slate-600" : p > 30 ? "text-red-400" : p > 10 ? "text-amber-300" : "text-emerald-400"}">${p == null ? "—" : (p >= 0 ? "+" : "") + fmt(p) + "%"}</span></td>`;
+    }).join("");
+    const tp = s0 ? (s1 / s0 - 1) * 100 : null;
+    return `<table class="text-xs w-full"><tr class="text-slate-400"><th class="text-left px-2">帳單月</th>${[...Array(12).keys()].map(i => `<th class="px-2">${i + 1} 月</th>`).join("")}<th class="px-2">同期合計</th></tr>
+        <tr class="border-t border-slate-700/50"><td class="px-2 py-1 text-slate-400">${y0}<br>${y1}<br>增減</td>${cells}
+        <td class="px-2 py-1 text-right font-mono">${fmt(s0)}<br><span class="text-white font-bold">${fmt(s1)}</span><br><span class="${tp > 10 ? "text-amber-300" : "text-emerald-400"}">${tp == null ? "—" : (tp >= 0 ? "+" : "") + fmt(tp, 1) + "%"}</span></td></tr></table>`;
+}
+
+function dayTable() {
+    const hs = W.hours || [];
+    const rows = (W.days || []).slice(-45).reverse().map(d => `<tr class="border-b border-slate-700/40 ${d.off ? "text-slate-400" : ""}">
+        <td class="py-1 pr-3 font-mono">${d.d}</td><td class="pr-3">${wk(d.d)}${d.off ? "・假" : ""}</td>
+        ${hs.map(h => `<td class="pr-3 text-right font-mono">${fmt(d.h[String(h)])}</td>`).join("")}
+        <td class="pr-3 text-right font-mono font-bold text-white">${fmt(d.use)}</td><td class="pr-3 text-right font-mono">${fmt(d.est)}</td>
+        <td class="pr-3 text-right font-mono ${d.nm ? "text-red-400" : d.night >= 2 ? "text-amber-300" : ""}">${fmt(d.night)}</td>
+        <td class="pr-3 text-right font-mono">${d.rf}</td><td class="pr-3 text-right font-mono">${fmt(d.r7)}</td></tr>`).join("");
+    return `<table class="text-xs md:text-sm w-full"><tr class="text-slate-400 text-left"><th class="pr-3">日期</th><th class="pr-3">星期</th>
+        ${hs.map(h => `<th class="pr-3 text-right">${String(h).padStart(2, "0")} 時指針</th>`).join("")}
+        <th class="pr-3 text-right">日用量</th><th class="pr-3 text-right">台水估算量</th><th class="pr-3 text-right">夜間 00–06</th><th class="pr-3 text-right">補水次數</th><th class="pr-3 text-right">近 7 天</th></tr>${rows}</table>`;
+}
+
+function chart(id, cfg) {
+    if (charts[id]) charts[id].destroy();
+    const el = document.getElementById(id);
+    if (el) charts[id] = new Chart(el, cfg);
+}
+
+function draw() {
+    Chart.defaults.color = "#94a3b8";
+    Chart.defaults.borderColor = "rgba(148,163,184,.12)";
+    const days = (W.days || []).slice(-range), B = W.baseline || {};
+    const lab = days.map(d => md(d.d));
+    const base = { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+        plugins: { legend: { labels: { boxWidth: 12 } } } };
+    chart("cDay", { data: { labels: lab, datasets: [
+        { type: "bar", label: "日用量（度）", data: days.map(d => d.use), backgroundColor: days.map(d => d.off ? "rgba(148,163,184,.55)" : "rgba(34,211,238,.7)") },
+        { type: "line", label: "近 7 天平均", data: days.map(d => d.r7 != null ? d.r7 / 7 : null), borderColor: "#f59e0b", pointRadius: 0, borderWidth: 2, spanGaps: true },
+    ] }, options: { ...base, scales: { y: { beginAtZero: true, title: { display: true, text: "度（m³）" } } } } });
+
+    const nd = (W.days || []).slice(-Math.min(range, 90)).filter(d => d.night != null);
+    chart("cNight", { type: "bar", data: { labels: nd.map(d => md(d.d)), datasets: [{ label: "夜間用水（度）", data: nd.map(d => d.night),
+        backgroundColor: nd.map(d => d.nm ? "#ef4444" : d.night >= 2 ? "#f59e0b" : "#10b981") }] },
+        options: { ...base, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, suggestedMax: 5 } } } });
+
+    const wks = (W.weeks || []).slice(-26), wb = B.week;
+    const line = (v, c, dash, label) => ({ type: "line", label, data: wks.map(() => v), borderColor: c, borderDash: dash, pointRadius: 0, borderWidth: 1.5 });
+    chart("cWeek", { data: { labels: wks.map(w => md(w.start)), datasets: [
+        { type: "bar", label: "週合計（度）", data: wks.map(w => w.use), backgroundColor: wks.map(w => wb && w.use > wb * 1.6 ? "#ef4444" : wb && w.use > wb * 1.3 ? "#f59e0b" : "rgba(56,189,248,.7)") },
+        ...(wb ? [line(wb, "#e2e8f0", [4, 4], "基線"), line(wb * 1.3, "#f59e0b", [2, 3], "+30%"), line(wb * 1.6, "#ef4444", [2, 3], "+60%")] : []),
+    ] }, options: { ...base, scales: { y: { beginAtZero: true } } } });
+
+    const b = W.bills || {}, ys = Object.keys(b).sort();
+    const colors = ["rgba(148,163,184,.6)", "rgba(34,211,238,.8)", "#a78bfa"];
+    chart("cBill", { type: "bar", data: { labels: [...Array(12).keys()].map(i => i + 1 + " 月"),
+        datasets: ys.slice(-2).map((y, k) => ({ label: y + " 自來水（度，帳單月）", data: b[y], backgroundColor: colors[k] })) },
+        options: { ...base, scales: { y: { beginAtZero: true } } } });
+}
+
+load();
+setInterval(load, 15 * 60 * 1000);
+</script>
+</body>
+</html>
