@@ -86,6 +86,18 @@ const SECTIONS = [
         ]
     },
     {
+        title: "資料表（Google 試算表，需有權限的帳號登入）", icon: "fa-table", color: "text-emerald-400",
+        note: "儀表板的後台資料。三個都設「限制」，只有被共用的人打得開（2026-11-24 確認）。",
+        items: [
+            { name: "中創園區空調戰情大數據", icon: "fa-table-list", color: "text-emerald-300", href: "https://docs.google.com/spreadsheets/d/1NZ0OPky-I-oWXfFTeVR8qpFT1pFBwQvRoSerJYJJMwY/edit", ext: true,
+              desc: "每日預測紀錄、實測需量、預測vs實測、台電週報、台電帳單、空調人工vs自動等分頁。", src: "GitHub Actions 每日；台電週報每週日 14:37" },
+            { name: "園區空間每月用電表", icon: "fa-table-cells", color: "text-emerald-300", href: "https://docs.google.com/spreadsheets/d/1QmBGtE2ym9rZC46PPVvtGC6C82-mBw7l3L85pFUaJyY/edit", ext: true,
+              desc: "每個房間每月用電與電費，主站「每月用電」讀這份。", src: "同仁每月填；主站每日讀" },
+            { name: "中創園區_太陽能發電紀錄_雲端版", icon: "fa-solar-panel", color: "text-yellow-300", href: "https://docs.google.com/spreadsheets/d/14emzrciRx4VlmAgnwEgxJXioOPpN0zJeHeLkY0am87A/edit", ext: true,
+              desc: "T-REC 四組 PV 電表讀值，主站太陽能與需量預測用。", src: "solar-dashboard 機器人寫入" },
+        ]
+    },
+    {
         title: "展示頁（Claude 私人連結，需登入 Cliff 的 Claude 帳號）", icon: "fa-display", color: "text-fuchsia-400",
         note: "對外展示前請確認數字；引用數字一律對照 02 總表。",
         items: [
@@ -107,8 +119,6 @@ const SECTIONS = [
               desc: "T-REC 四組 PV 電表（solar-dashboard，Streamlit）。", src: "repo tsaitzuchien-star/solar-dashboard" },
             { name: "其他專案儀表板（中創、H300 等）", icon: "fa-layer-group", color: "text-slate-300", pending: "等各專案清單存到 08_各對話進度",
               desc: "各專案整理好儀表板清單後補進本頁。", src: "" },
-            { name: "Google 試算表（後台資料）", icon: "fa-table", color: "text-emerald-300", pending: "公開網站暫不放試算表網址",
-              desc: "空調戰情大數據、園區空間每月用電表、太陽能發電紀錄。連結見 Dropbox 09 總清單。", src: "" },
         ]
     },
 ];
