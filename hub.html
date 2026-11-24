@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中創園區 儀表板總覽</title>
+    <script src="https://cdn.tailwindcss.com/3.4.5"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); color: #e2e8f0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; min-height: 100vh; }
+        .glass-card { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1); }
+        a.dash { transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
+        a.dash:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.35); }
+        .sub { padding: 3px 10px; border-radius: 8px; background: #1e293b; color: #cbd5e1; font-size: 12px; }
+        .sub:hover { background: rgba(56, 189, 248, .2); color: #bae6fd; }
+        .pill { font-size: 11px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+<header class="flex flex-col md:flex-row justify-between items-center mb-6 glass-card p-5 gap-3">
+    <div class="flex items-center gap-4">
+        <i class="fa-solid fa-table-cells-large text-4xl text-blue-400 drop-shadow-[0_0_10px_rgba(96,165,250,0.8)]"></i>
+        <div>
+            <h1 class="text-2xl font-bold tracking-wider text-white">CTIC 中創園區<span class="font-light text-blue-300"> 儀表板總覽</span></h1>
+            <p class="text-xs text-slate-400 mt-1">所有能源、用水、預測與展示頁面的統一入口</p>
+        </div>
+    </div>
+    <div class="text-right">
+        <a href="index.html" class="text-sm text-blue-300 hover:text-blue-200"><i class="fa-solid fa-bolt mr-1"></i>進入電能戰情室</a>
+        <div id="where" class="text-xs text-slate-400 mt-1 font-mono"></div>
+    </div>
+</header>
+
+<main id="app" class="space-y-8"></main>
+
+<footer class="mt-10 text-xs text-slate-500 leading-relaxed">
+    清單來源：Dropbox 00_工作區\01_中創園區\15_年度目標策略與報告\00_總表與交接紀錄\09_儀表板與網站總清單_20261124.md（清單截至 2026-11-24）。
+    本頁只放連結與資料更新時間，不顯示用電數字；數字一律以 02_數字口徑與定案數據.md 為準。新增或下架儀表板時，請先另存新日期的 09 清單，再改本頁。
+</footer>
+
+<script>
+// ===== 判斷目前是雲端（GitHub Pages）還是監控電腦本機版（local_live.py :8088）=====
+const LOCAL = ["localhost", "127.0.0.1", "10.10.2.20"].includes(location.hostname) || location.port === "8088";
+const CLOUD = "https://tsaitzuchien-star.github.io/ctic-ems-dashboard/";
+const LOCAL_BASE = location.hostname === "localhost" || location.hostname === "127.0.0.1" ? "http://localhost:8088/" : "http://10.10.2.20:8088/";
+const RAW = "https://raw.githubusercontent.com/tsaitzuchien-star/Smart-Energy-Dashboard/";
+document.getElementById("where").textContent = LOCAL ? "目前開的是：監控電腦本機版" : "目前開的是：雲端版（GitHub Pages）";
+
+// ===== 儀表板清單（依 09 總清單；新增項目改這裡）=====
+// feed：資料檔，顯示最後更新時間；fresh：幾分鐘內算正常
+const FEEDS = {
+    live: { url: RAW + "ems-live/live.json", fresh: 60, label: "即時資料" },
+    tp: { url: RAW + "ems-live/taipower.json", fresh: 90, label: "台電 15 分鐘" },
+    water: { url: RAW + "ems-live/water.json", fresh: 26 * 60, label: "水表資料" },
+};
+const SECTIONS = [
+    {
+        title: "雲端網站", icon: "fa-cloud", color: "text-sky-400",
+        note: "任何地方都能開（手機、家裡、出差）。",
+        items: [
+            { name: "即時總覽", icon: "fa-gauge-high", color: "text-emerald-400", href: "index.html#Live", feed: "live",
+              desc: "目前需量、今日最高、契約使用率、太陽能、用電前幾名與夜間異常。", src: "監控電腦 → ems-live，約每 15 分鐘" },
+            { name: "台電需量", icon: "fa-bolt", color: "text-violet-400", href: "index.html#TP", feed: "tp",
+              desc: "台電計費電表 15 分鐘需量、契約線、預測 vs 台電實際。", src: "監控電腦爬台電高壓用戶網站，每 15 分鐘" },
+            { name: "能管分析（含帳單、每月用電）", icon: "fa-magnifying-glass-chart", color: "text-sky-400", href: "index.html#EM",
+              desc: "年度比較、超約紀錄、台電帳單各時段需量、園區每月用電與電價、帳單填寫檢查。", src: "ems-monthly（bill.json、monthly.json），每日" },
+            { name: "各棟房間迴路", icon: "fa-building", color: "text-slate-300", href: "index.html#A",
+              desc: "A／B／C 棟與公設機房，每個空間的照明、插座、空調迴路與用電。", src: "ems-live/rooms.json",
+              subs: [["A棟", "index.html#A"], ["B棟", "index.html#B"], ["C棟", "index.html#C"], ["公設機房", "index.html#Public"]] },
+            { name: "用水戰情室", icon: "fa-droplet", color: "text-cyan-400", href: "water.html", feed: "water",
+              desc: "台水智慧水表用水、夜間基礎流量、漏水告警。", src: "監控電腦抓台水水表e管家，每天 08:10、14:10" },
+            { name: "需量預測（契約容量暨空調聯防）", icon: "fa-chart-line", color: "text-amber-400", href: "https://ctic-energy-h300.streamlit.app/", ext: true,
+              desc: "明日需量預測、今晚儲冰／磁浮任務、逐時明細、實測趨勢。", src: "Streamlit；每日 17:47 預測（19:47 補跑），週一 10:00 校正",
+              hint: "久沒開會休眠，第一次開要等約 30 秒喚醒。" },
+        ]
+    },
+    {
+        title: "公司內網／監控電腦本機", icon: "fa-network-wired", color: "text-rose-400",
+        note: "只能在公司網路內開（監控電腦、空調電腦或公司內電腦）。",
+        items: [
+            { name: "本機即時版戰情室", icon: "fa-bolt", color: "text-rose-400", href: LOCAL ? "index.html" : LOCAL_BASE, local: true,
+              desc: "和雲端版相同，另多「即時監控」「空調系統圖」兩個分頁，讀值每 5 秒更新。", src: "監控電腦 local_live.py 直接讀 InTouch",
+              hint: "監控電腦本機開 http://localhost:8088 ；空調電腦開 http://10.10.2.20:8088" },
+            { name: "迴路測試頁", icon: "fa-plug-circle-bolt", color: "text-amber-300", href: LOCAL ? "circuit_test.html" : LOCAL_BASE + "circuit_test.html", local: true,
+              desc: "現場加負載，測迴路對應哪個房間（以盤總表 0.01 kWh 判斷）。", src: "local_live /api/ems/panel，即時" },
+        ]
+    },
+    {
+        title: "展示頁（Claude 私人連結，需登入 Cliff 的 Claude 帳號）", icon: "fa-display", color: "text-fuchsia-400",
+        note: "對外展示前請確認數字；引用數字一律對照 02 總表。",
+        items: [
+            { name: "中創園區 3D 模型 v3", icon: "fa-cube", color: "text-fuchsia-300", href: "https://claude.ai/artifact/2Srn6aE5RpANW18UrdZsdr", ext: true,
+              desc: "3D 園區模型互動檢視。", src: "離線版：Dropbox …\\06_影片與工作站\\3D模型\\v3" },
+            { name: "太陽能與空調成果說明", icon: "fa-solar-panel", color: "text-yellow-300", href: "https://claude.ai/artifact/FupnXFBeJ286mDb4crCRCB", ext: true,
+              desc: "成果說明頁（2026-11-16）。", src: "" },
+            { name: "AI 需量預測系統成果", icon: "fa-robot", color: "text-sky-300", href: "https://claude.ai/artifact/GiijGFmzJiDWDpmwttwQUB", ext: true,
+              desc: "成果說明頁（2026-10-10）。", src: "", warn: "數字較舊，引用前先對照 02 總表" },
+            { name: "明年夏月儲冰、融冰與磁浮搭配", icon: "fa-snowflake", color: "text-cyan-300", href: "https://claude.ai/artifact/GpRJjBHW5mnZmJhvH3Cv8i", ext: true,
+              desc: "討論稿頁面。", src: "" },
+        ]
+    },
+    {
+        title: "待補", icon: "fa-hourglass-half", color: "text-slate-400",
+        note: "網址或清單補齊後再加入。",
+        items: [
+            { name: "太陽能監測儀表板", icon: "fa-sun", color: "text-yellow-400", pending: "網址待 Cliff 提供",
+              desc: "T-REC 四組 PV 電表（solar-dashboard，Streamlit）。", src: "repo tsaitzuchien-star/solar-dashboard" },
+            { name: "其他專案儀表板（中創、H300 等）", icon: "fa-layer-group", color: "text-slate-300", pending: "等各專案清單存到 08_各對話進度",
+              desc: "各專案整理好儀表板清單後補進本頁。", src: "" },
+            { name: "Google 試算表（後台資料）", icon: "fa-table", color: "text-emerald-300", pending: "公開網站暫不放試算表網址",
+              desc: "空調戰情大數據、園區空間每月用電表、太陽能發電紀錄。連結見 Dropbox 09 總清單。", src: "" },
+        ]
+    },
+];
+
+// ===== 畫面 =====
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function card(it) {
+    const tag = it.pending ? "div" : "a";
+    const attrs = it.pending ? "" : ` href="${esc(it.href)}"${it.ext ? ' target="_blank" rel="noopener"' : ""}`;
+    const badge = it.pending ? ""
+        : it.local && !LOCAL ? `<span class="pill bg-rose-500/15 text-rose-300">限公司內網</span>`
+        : it.ext ? `<i class="fa-solid fa-arrow-up-right-from-square text-[11px] text-slate-500"></i>` : "";
+    const subs = it.subs ? `<div class="flex flex-wrap gap-2 mt-3">${it.subs.map(([n, h]) => `<span class="sub" onclick="event.preventDefault();event.stopPropagation();location.href='${h}'">${n}</span>`).join("")}</div>` : "";
+    return `<${tag}${attrs} class="dash glass-card p-5 block ${it.pending ? "opacity-60 border-dashed" : ""}">
+        <div class="flex items-start justify-between gap-3">
+            <div class="flex items-center gap-3"><i class="fa-solid ${it.icon} text-2xl ${it.color}"></i>
+                <h3 class="text-base font-bold text-white leading-snug">${esc(it.name)}</h3></div>
+            ${badge}
+        </div>
+        ${it.pending ? `<span class="pill inline-block mt-3 bg-slate-600/40 text-slate-300"><i class="fa-solid fa-hourglass-half mr-1"></i>${esc(it.pending)}</span>` : ""}
+        <p class="text-sm text-slate-300 mt-3 leading-relaxed">${esc(it.desc)}</p>
+        ${it.warn ? `<p class="text-xs text-amber-300 mt-2"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${esc(it.warn)}</p>` : ""}
+        ${it.hint ? `<p class="text-xs text-slate-400 mt-2"><i class="fa-solid fa-circle-info mr-1"></i>${esc(it.hint)}</p>` : ""}
+        ${subs}
+        <div class="flex flex-wrap items-center justify-between gap-2 mt-3 text-[11px] text-slate-500">
+            <span>${esc(it.src)}</span>${it.feed ? `<span class="pill bg-slate-700/60 text-slate-400" data-feed="${it.feed}">讀取中…</span>` : ""}
+        </div>
+    </${tag}>`;
+}
+document.getElementById("app").innerHTML = SECTIONS.map(s => `
+    <section>
+        <div class="flex flex-wrap items-baseline gap-x-3 mb-3"><h2 class="text-lg font-bold text-white"><i class="fa-solid ${s.icon} mr-2 ${s.color}"></i>${esc(s.title)}</h2>
+            <span class="text-xs text-slate-400">${esc(s.note)}</span></div>
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">${s.items.map(card).join("")}</div>
+    </section>`).join("");
+
+// ===== 資料更新時間（只看時間戳，不顯示數字）=====
+function ageMin(t) { const d = new Date(t.replace(" ", "T") + "+08:00"); return isNaN(d) ? null : (Date.now() - d) / 60000; }
+async function feeds() {
+    for (const [k, f] of Object.entries(FEEDS)) {
+        let html;
+        try {
+            const r = await fetch(f.url + "?t=" + Date.now(), { cache: "no-store" });
+            if (!r.ok) throw new Error(r.status);
+            const j = await r.json();
+            const a = ageMin(j.updated || "");
+            const ok = a != null && a <= f.fresh;
+            html = [`${f.label} ${esc((j.updated || "—").slice(5))}`, ok ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-400/15 text-amber-200"];
+        } catch (e) { html = [`${f.label} 讀不到`, "bg-red-500/15 text-red-300"]; }
+        document.querySelectorAll(`[data-feed="${k}"]`).forEach(el => { el.textContent = html[0]; el.className = "pill " + html[1]; });
+    }
+}
+feeds();
+setInterval(feeds, 5 * 60 * 1000);
+</script>
+</body>
+</html>
