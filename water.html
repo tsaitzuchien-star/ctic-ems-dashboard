@@ -83,7 +83,7 @@ function render() {
         + alerts.map(a => { const c = LV[a.level] || LV.info; return `<div class="glass-card p-4 border ${c[0]} flex items-start gap-3">
             <i class="fa-solid ${c[1]} text-xl mt-0.5"></i><div><p class="font-bold ${c[2]}">${a.title}</p><p class="text-sm text-slate-300">${a.text}</p></div></div>`; }).join("")
         + (S.outage_notice && !String(S.outage_notice).includes("目前無停水公告") ? `<div class="glass-card p-4 border border-sky-400/50 bg-sky-400/10 flex items-start gap-3">
-            <i class="fa-solid fa-faucet-drip text-sky-300 text-xl mt-0.5"></i><div><p class="font-bold text-sky-100">台水停水公告</p><p class="text-sm text-slate-300">${S.outage_notice}</p></div></div>` : "")
+            <i class="fa-solid fa-faucet-drip text-sky-300 text-xl mt-0.5"></i><div><p class="font-bold text-sky-100">台水轄區停水公告</p><p class="text-xs text-slate-400 mb-1">台水首頁列出的南投縣公告，不一定影響園區；請看路段是否在園區附近。</p><p class="text-sm text-slate-300">${(S.outage_list && S.outage_list.length ? S.outage_list : String(S.outage_notice).split("；")).map(x => "• " + x).join("<br>")}</p></div></div>` : "")
         + (S.scrape_ok === false ? `<div class="glass-card p-3 border border-slate-500/50 text-sm text-slate-300"><i class="fa-solid fa-plug-circle-xmark mr-2 text-slate-400"></i>
             最近一次抓取失敗（${S.scraped_at || ""}）：${S.scrape_error || ""}。下次排程會再試。</div>` : "");
 
