@@ -1,12 +1,12 @@
 {
-  "id": "2026-11-24-xiemqd-pr87-step1",
+  "id": "2026-11-24-xiemqd-pr87-step2",
   "requested_by": "Cliff Tsai",
   "approved_at": "2026-11-24T16:23:09+08:00",
   "expires": "2026-11-24T23:59:00+08:00",
-  "note": "PR #87 第 1 步：update_cmd.ps1（可更新清單加 hub.html、water.html）+ index.html（導覽列「儀表板總覽」、#分頁直達）；Cliff 2026-11-24 16:23「好」",
-  "sha": "3fd1b183e1427376f029111e8f114c7a32c5a9c9",
+  "note": "PR #87/#89/#91 第 2 步：監控電腦加 hub.html（儀表板總覽）、water.html（用水戰情室）；Cliff 2026-11-24 16:23「好」",
+  "sha": "d227d4dab29de371a25bd77adfded8cea3a33dc1",
   "files": [
-    { "pc": "bms", "file": "tools/update_cmd.ps1" },
-    { "pc": "bms", "file": "index.html" }
+    { "pc": "bms", "file": "hub.html" },
+    { "pc": "bms", "file": "water.html" }
   ]
 }
