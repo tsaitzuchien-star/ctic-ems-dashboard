@@ -1,12 +1,11 @@
 {
-  "id": "2026-11-24-xiemqd-pr87-step2",
+  "id": "2026-11-24-xiemqd-pr92-hub",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-24T16:23:09+08:00",
+  "approved_at": "2026-11-24T16:44:54+08:00",
   "expires": "2026-11-24T23:59:00+08:00",
-  "note": "PR #87/#89/#91 第 2 步：監控電腦加 hub.html（儀表板總覽）、water.html（用水戰情室）；Cliff 2026-11-24 16:23「好」",
-  "sha": "d227d4dab29de371a25bd77adfded8cea3a33dc1",
+  "note": "PR #92：總覽頁成果卡改連依 02 總表更新的新版、拿掉警示（hub.html）；Cliff 2026-11-24 16:44「好」",
+  "sha": "cb102e42c63e8ae84c758c0adac8f58e2063f665",
   "files": [
-    { "pc": "bms", "file": "hub.html" },
-    { "pc": "bms", "file": "water.html" }
+    { "pc": "bms", "file": "hub.html" }
   ]
 }
