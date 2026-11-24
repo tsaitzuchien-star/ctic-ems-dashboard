@@ -51,6 +51,7 @@
 
     <div class="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-6 border-b border-slate-700 pb-4 sticky top-0 bg-[#0f172a]/90 backdrop-blur-md z-10 py-4 px-2 -mx-2 rounded-lg">
         <div class="flex flex-wrap gap-2 w-full xl:w-auto" id="tabsContainer">
+            <a href="hub.html" class="px-4 py-2 rounded-lg hover:bg-slate-800 text-blue-300 border border-blue-500/30 transition"><i class="fa-solid fa-table-cells-large mr-2"></i>儀表板總覽</a>
             <button onclick="switchTab('RT')" id="tab-RT" class="tab-btn hidden px-4 py-2 rounded-lg hover:bg-slate-800 text-rose-400 border border-transparent transition"><i class="fa-solid fa-bolt mr-2"></i>即時監控</button>
             <button onclick="switchTab('SYS')" id="tab-SYS" class="tab-btn hidden px-4 py-2 rounded-lg hover:bg-slate-800 text-cyan-400 border border-transparent transition"><i class="fa-solid fa-diagram-project mr-2"></i>空調系統圖</button>
             <button onclick="switchTab('Live')" id="tab-Live" class="tab-btn px-4 py-2 rounded-lg hover:bg-slate-800 text-emerald-400 border border-transparent transition"><i class="fa-solid fa-gauge-high mr-2"></i>即時總覽</button>
@@ -1919,7 +1920,9 @@
 
         // 初始化：本機版預設開「即時監控」，雲端版開「即時總覽」
         if (EMS_LOCAL) ['tab-RT', 'tab-SYS'].forEach(id => document.getElementById(id).classList.remove('hidden'));
-        switchTab(EMS_LOCAL ? 'RT' : 'Live');
+        // 網址加 #分頁 可直接開指定分頁（儀表板總覽用），例：index.html#TP
+        const hashTab = location.hash.slice(1);
+        switchTab(document.getElementById('tab-' + hashTab) && !document.getElementById('tab-' + hashTab).classList.contains('hidden') ? hashTab : (EMS_LOCAL ? 'RT' : 'Live'));
         fetchPowerData();
 
         // 雲端版每 5 分鐘抓一次；本機版每分鐘（本機每分鐘重算）
