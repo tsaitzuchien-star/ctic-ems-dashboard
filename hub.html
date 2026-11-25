@@ -98,6 +98,28 @@ const SECTIONS = [
         ]
     },
     {
+        title: "園區營運（餐廳、會議室、入園、部門管理）", icon: "fa-building-user", color: "text-amber-400",
+        note: "其他專案做的儀表板，依各專案 2026-11-24 清單。Claude 頁只有 Cliff 帳號打得開；含個資的不放連結。",
+        items: [
+            { name: "用餐預測戰情室", icon: "fa-utensils", color: "text-amber-300", href: "https://tsaitzuchien-star.github.io/CTIC_Dining_Prediction/", ext: true,
+              desc: "依門禁已到常客 × 出席率推估今天用餐份數，08:30 向團膳訂餐；命中率與趨勢。", src: "餐廳帳務系統專案；頁面每 60 秒重讀" },
+            { name: "本週菜單", icon: "fa-bowl-food", color: "text-amber-300", href: "https://tsaitzuchien-star.github.io/CTIC_Dining_Prediction/menu.html", ext: true,
+              desc: "本週／下週菜單，已嵌入中創生活網站。", src: "餐廳帳務系統專案；每週更新" },
+            { name: "餐廳管理平台", icon: "fa-cash-register", color: "text-amber-300", internal: "限內部，不放連結",
+              desc: "欣柔每天訂餐、結算、卡片管理（Streamlit，可寫入資料）。網址見餐廳專案清單。", src: "建議先在 Streamlit 設成限定 Email" },
+            { name: "中創會議室經營儀表板", icon: "fa-people-roof", color: "text-orange-300", href: "https://claude.ai/artifact/QigsXLYn9G6kxiFfzUkxMv", ext: true,
+              desc: "營收對目標、使用率、熱門時段、客戶排行、9 間會議室今天狀態。", src: "工作萬能小助理專案；開頁即時讀試算表" },
+            { name: "每日入園人數儀表板", icon: "fa-person-walking-arrow-right", color: "text-orange-300", href: "https://claude.ai/artifact/Af7e3raMCPCoBoKyTHJ1tF", ext: true,
+              desc: "每日入園人數：工研院／進駐廠商／其他、各廠商、月年趨勢、活動人數。", src: "工作萬能小助理專案；門禁資料每天約 07:10" },
+            { name: "中創服務部管理儀表板", icon: "fa-list-check", color: "text-orange-300", href: "https://claude.ai/artifact/BLa7aJY3bhEeWx1gL8x9zM", ext: true,
+              desc: "工程平台、服務需求單、預算動支、採購、承攬商、報修單的案件燈號與年底期限。", src: "工作萬能小助理專案；每天 07:30、12:30 同步" },
+            { name: "營運辦帳務管理資料地圖", icon: "fa-map", color: "text-orange-300", href: "https://claude.ai/artifact/Cpjfvm1fo617GvN77PnJxX", ext: true,
+              desc: "營運辦 Teams 資料怎麼流到 Power BI、預估支出、待討論事項（參考快照）。", src: "工作萬能小助理專案；不自動更新" },
+            { name: "園區入口警勤看板", icon: "fa-shield-halved", color: "text-red-300", internal: "含個資，限內部",
+              desc: "警衛台大字看板與手機版：今日入園、施工、簽核進度。", src: "-93 本機與 Claude 私人頁；不放連結" },
+        ]
+    },
+    {
         title: "展示頁（Claude 私人連結，需登入 Cliff 的 Claude 帳號）", icon: "fa-display", color: "text-fuchsia-400",
         note: "對外展示前請確認數字；引用數字一律對照 02 總表。",
         items: [
@@ -117,8 +139,6 @@ const SECTIONS = [
         items: [
             { name: "太陽能監測儀表板", icon: "fa-sun", color: "text-yellow-400", pending: "網址待 Cliff 提供",
               desc: "T-REC 四組 PV 電表（solar-dashboard，Streamlit）。", src: "repo tsaitzuchien-star/solar-dashboard" },
-            { name: "其他專案儀表板（中創、H300 等）", icon: "fa-layer-group", color: "text-slate-300", pending: "等各專案清單存到 08_各對話進度",
-              desc: "各專案整理好儀表板清單後補進本頁。", src: "" },
         ]
     },
 ];
@@ -126,9 +146,10 @@ const SECTIONS = [
 // ===== 畫面 =====
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function card(it) {
-    const tag = it.pending ? "div" : "a";
-    const attrs = it.pending ? "" : ` href="${esc(it.href)}"${it.ext ? ' target="_blank" rel="noopener"' : ""}`;
+    const tag = it.pending || it.internal ? "div" : "a";
+    const attrs = it.pending || it.internal ? "" : ` href="${esc(it.href)}"${it.ext ? ' target="_blank" rel="noopener"' : ""}`;
     const badge = it.pending ? ""
+        : it.internal ? `<span class="pill bg-red-500/15 text-red-300"><i class="fa-solid fa-lock mr-1"></i>${esc(it.internal)}</span>`
         : it.local && !LOCAL ? `<span class="pill bg-rose-500/15 text-rose-300">限公司內網</span>`
         : it.ext ? `<i class="fa-solid fa-arrow-up-right-from-square text-[11px] text-slate-500"></i>` : "";
     const subs = it.subs ? `<div class="flex flex-wrap gap-2 mt-3">${it.subs.map(([n, h]) => `<span class="sub" onclick="event.preventDefault();event.stopPropagation();location.href='${h}'">${n}</span>`).join("")}</div>` : "";
