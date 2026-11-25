@@ -378,7 +378,7 @@ def ac_summary(rows, now):
         return sum(a) if a else None
 
     # 故障中的液位計不列入平均（2026-11-16 液位計 01 故障讀 0）；修好後從這裡拿掉
-    ICE_BROKEN = {"ice02_pct"}  # 2026-11-18 冰桶15 表頭類比輸出故障；冰桶01 已修復
+    ICE_BROKEN = set()  # 2026-11-25 冰桶15 換新表頭驗收通過；兩桶都列入
 
     def ice(v):
         a = [v[k] for k in ("ice01_pct", "ice02_pct") if k in v and k not in ICE_BROKEN]

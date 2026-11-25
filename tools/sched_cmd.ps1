@@ -44,6 +44,9 @@
 # 冷卻水塔設定溫度（2026-11-16 起，空調同仁經 Cliff 授權，給待測項目用）：kind = ct，只寫 SGB1DC51_CT<n>_PID_SP。
 #   {"kind":"ct","tower":3,"sp":22}     tower 只能 1、2、3；sp 只允許 20–35 °C（2026-11-16 堃霖原廠：冬季冷卻水可降到 19–23 °C，低於 16 °C 會跳喘振；下限取 20，保留 4 °C 安全距離）。
 #   寫入前讀現值、寫入 3 秒後讀回核對，結果附「原本幾度」，測完照原值送回去。不碰風扇啟停、變頻手動輸出、PID 參數。
+# 冰桶液位校正值（2026-11-25 起，Cliff 授權）：kind = iboffset，只寫 SGB1DC51_Sys_IB_Limit0<n>_offset（InTouch「Sys儲冰槽_Limit0n 校正值」）。
+#   {"kind":"iboffset","tank":1,"value":-13}     tank 1 = 冰桶 01（Limit01）、2 = 冰桶 15（Limit02）；value 只允許 −20～+20（%）。
+#   寫入前讀現值與液位，寫入後讀回核對，10 秒後再讀液位，結果附「原本多少」，要還原就送 value = 原值。不碰其他點位。
 # 停用：在 C:\BMS_Export 放 sched_cmd_off.txt。
 # 結果：C:\BMS_Export\sched_cmd_result.json（監控電腦讀到後推 LINE）與 sched_cmd.log。
 # 測試：powershell -ExecutionPolicy Bypass -File C:\BMS_Export\sched_cmd.ps1 -File 某指令.json -DryRun   （只檢查、不寫）
@@ -247,6 +250,13 @@ function Check-Change($c, $now) {
       return "冷卻水塔 CT$($c.tower) 設定溫度 $($c.sp) 超出 $CT_SP_MIN–$CT_SP_MAX °C" }
     return $null
   }
+  if ("$($c.kind)" -eq 'iboffset') {
+    if (@('1','2') -notcontains "$($c.tank)") { return "冰桶 $($c.tank) 不對（只能 1 = 冰桶01、2 = 冰桶15）" }
+    $v = 0.0
+    if (-not [double]::TryParse("$($c.value)", [Globalization.NumberStyles]::Float, $inv, [ref]$v) -or $v -lt -20 -or $v -gt 20) {
+      return "冰桶液位校正值 $($c.value) 超出 −20～+20" }
+    return $null
+  }
   if ("$($c.kind)" -eq 'hist') {
     if (-not $HIST_SETS.ContainsKey("$($c.set)")) { return "點位組 $($c.set) 不在白名單（只能 $($HIST_SETS.Keys -join ', ')）" }
     $a = [datetime]::MinValue; $b = [datetime]::MinValue
@@ -301,7 +311,7 @@ function Check-Change($c, $now) {
     if ($null -eq $cs) { return "照明迴路不對（要 all 或 $($LIGHT_CIRCUITS -join ',') 其中幾個）" }
     return $null
   }
-  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit / event / hist / screenshot / ct / allow）" }
+  if (-not $PREFIX.ContainsKey("$($c.kind)")) { return "種類 $($c.kind) 不在白名單（只能 ice / melt / chu2 / fcu / light / maglimit / event / hist / screenshot / ct / allow / iboffset）" }
   $d = 0; if (-not [int]::TryParse("$($c.day)", [ref]$d) -or $d -lt 1 -or $d -gt 7) { return "星期 $($c.day) 不對（1–7）" }
   if (-not (Hm-Ok $c.on) -or -not (Hm-Ok $c.off)) { return "時間格式不對（$($c.on)–$($c.off)，要 HH:MM）" }
   if ("$($c.en)" -ne '0' -and "$($c.en)" -ne '1') { return "勾選 en 只能 0 或 1" }
@@ -416,7 +426,7 @@ if (($exp - $apv).TotalHours -gt 24) { $res.status = 'rejected'; $res.lines = @(
 $changes = @($cmd.changes)
 if ($changes.Count -lt 1 -or $changes.Count -gt 21) { $res.status = 'rejected'; $res.lines = @('沒有要改的項目，或一次超過 21 筆'); Save-Result $res; exit 0 }
 $why = @()
-foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } elseif ("$($c.kind)" -eq 'event') { "活動登記 $e" } elseif ("$($c.kind)" -eq 'hist') { "匯出歷史 $e" } elseif ("$($c.kind)" -eq 'screenshot') { "截圖 $e" } elseif ("$($c.kind)" -eq 'ct') { "冷卻水塔 $e" } elseif ("$($c.kind)" -eq 'allow') { "加班名單 $e" } else { "$(Day-Label $c.day) $e" }) } }
+foreach ($c in $changes) { $e = Check-Change $c $now; if ($e) { $why += $(if (@('fcu','light') -contains "$($c.kind)") { "$($c.room) $e" } elseif ("$($c.kind)" -eq 'maglimit') { "磁浮負載上限 $e" } elseif ("$($c.kind)" -eq 'event') { "活動登記 $e" } elseif ("$($c.kind)" -eq 'hist') { "匯出歷史 $e" } elseif ("$($c.kind)" -eq 'screenshot') { "截圖 $e" } elseif ("$($c.kind)" -eq 'ct') { "冷卻水塔 $e" } elseif ("$($c.kind)" -eq 'allow') { "加班名單 $e" } elseif ("$($c.kind)" -eq 'iboffset') { "冰桶液位校正 $e" } else { "$(Day-Label $c.day) $e" }) } }
 if ($why.Count) { $res.status = 'rejected'; $res.lines = @('整筆指令沒有執行：') + $why; Save-Result $res; exit 0 }
 
 # ---- 寫入（WindowViewer 要開著） ----
@@ -453,6 +463,23 @@ foreach ($c in $changes) {
     if ($null -ne $a -and [double]::TryParse("$($a[0])", [Globalization.NumberStyles]::Float, $inv, [ref]$av) -and [math]::Abs($av - $val) -lt 0.05) {
       $res.lines += "${label}：$bv → $([math]::Round($av, 1).ToString($inv))°C ✅（原本 $bv°C）" }
     else { $allOk = $false; $res.lines += "${label}：寫入 $val°C 後讀回 $(if ($null -ne $a) { $a[0] } else { '讀不到' })，不一致 ❌（原本 $bv°C）" }
+    continue
+  }
+  if ("$($c.kind)" -eq 'iboffset') {
+    $n = [int]"$($c.tank)"; $tag = "SGB1DC51_Sys_IB_Limit0$($n)_offset"; $lv = "SGB1DC51_Sys_IB_Limit0$n"
+    $val = [double]"$($c.value)"; $label = "冰桶$(if ($n -eq 1) { '01' } else { '15' }) 液位校正值"
+    $b = [CticDdeW]::Read([string[]]@($tag, $lv), 3000, 10000); $bd = 0.0; $bl = 0.0
+    $bv = $(if ($null -ne $b -and [double]::TryParse("$($b[0])", [Globalization.NumberStyles]::Float, $inv, [ref]$bd)) { [math]::Round($bd, 2).ToString($inv) } else { '?' })
+    $blv = $(if ($null -ne $b -and [double]::TryParse("$($b[1])", [Globalization.NumberStyles]::Float, $inv, [ref]$bl)) { [math]::Round($bl, 1).ToString($inv) } else { '?' })
+    if ($DryRun) { $res.lines += "${label}：目前 $bv（液位 $blv%）→ $val（試跑，沒寫）"; continue }
+    $null = [CticDdeW]::Poke($tag, $val.ToString($inv)); Start-Sleep -Seconds 3
+    $a = [CticDdeW]::Read([string[]]@($tag), 3000, 10000); $av = 0.0
+    if ($null -ne $a -and [double]::TryParse("$($a[0])", [Globalization.NumberStyles]::Float, $inv, [ref]$av) -and [math]::Abs($av - $val) -lt 0.05) {
+      Start-Sleep -Seconds 10
+      $l2 = [CticDdeW]::Read([string[]]@($lv), 3000, 10000); $al = 0.0
+      $alv = $(if ($null -ne $l2 -and [double]::TryParse("$($l2[0])", [Globalization.NumberStyles]::Float, $inv, [ref]$al)) { [math]::Round($al, 1).ToString($inv) } else { '?' })
+      $res.lines += "${label}：$bv → $([math]::Round($av, 2).ToString($inv)) ✅（原本 $bv）液位 $blv% → $alv%" }
+    else { $allOk = $false; $res.lines += "${label}：寫入 $val 後讀回 $(if ($null -ne $a) { $a[0] } else { '讀不到' })，不一致 ❌（原本 $bv）" }
     continue
   }
   if ("$($c.kind)" -eq 'hist') {

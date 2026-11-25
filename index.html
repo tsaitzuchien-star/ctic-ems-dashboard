@@ -541,7 +541,7 @@
         }
         function rtSet(id, v) { const el = document.getElementById(id); if (el) el.innerHTML = v; }
         // 故障中的液位計：不列入平均、顯示「故障」。修好後把編號從這裡拿掉即可恢復。
-        const ICE_BROKEN = { 2: '冰桶 15 表頭類比輸出故障，待換表頭（2026-11-18）' };
+        const ICE_BROKEN = {}; // 2026-11-25 冰桶15 新表頭 DT5H 驗收通過（AnLo−10/AnHi90 測試監控讀 8%）
         const ICE_NAME = { 1: '冰桶 01', 2: '冰桶 15' };
         const iceOk = k => !ICE_BROKEN[k];
         function rtPct(id, v) { rtSet(id, v == null ? '—' : fmt(v, 1) + '%'); const b = document.getElementById(id + '-bar'); if (b) b.style.width = Math.max(0, Math.min(100, v || 0)) + '%'; }
