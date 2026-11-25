@@ -67,9 +67,11 @@ const SECTIONS = [
             { name: "各棟房間迴路", icon: "fa-building", color: "text-slate-300", href: "index.html#A",
               desc: "A／B／C 棟與公設機房，每個空間的照明、插座、空調迴路與用電。", src: "ems-live/rooms.json",
               subs: [["A棟", "index.html#A"], ["B棟", "index.html#B"], ["C棟", "index.html#C"], ["公設機房", "index.html#Public"]] },
+            { name: "中創太陽能戰情室", icon: "fa-sun", color: "text-yellow-400", href: "https://tsaitzuchien-star.github.io/ctic-dashboard/", ext: true,
+              desc: "今日累積發電、即時總功率、各子系統發電、今年綠電憑證張數與下一張進度。", src: "T-REC 憑證中心同步；Google 試算表「中創園區_太陽能發電紀錄_雲端版」" },
             { name: "用水戰情室", icon: "fa-droplet", color: "text-cyan-400", href: "water.html", feed: "water",
               desc: "台水智慧水表用水、夜間基礎流量、漏水告警。", src: "監控電腦抓台水水表e管家，每天 08:10、14:10" },
-            { name: "需量預測（契約容量暨空調聯防）", icon: "fa-chart-line", color: "text-amber-400", href: "https://ctic-energy-h300.streamlit.app/", ext: true,
+            { name: "中創空調聯防（契約容量需量預測）", icon: "fa-chart-line", color: "text-amber-400", href: "https://ctic-energy-h300.streamlit.app/", ext: true,
               desc: "明日需量預測、今晚儲冰／磁浮任務、逐時明細、實測趨勢。", src: "Streamlit；每日 17:47 預測（19:47 補跑），週一 10:00 校正",
               hint: "久沒開會休眠，第一次開要等約 30 秒喚醒。" },
         ]
@@ -131,14 +133,6 @@ const SECTIONS = [
               desc: "一頁成果：預測誤差、超約、契約容量效益（數據截至 2026-11-24，依 02 總表）。", src: "有新數字先改 02 總表再更新本頁" },
             { name: "明年夏月儲冰、融冰與磁浮搭配", icon: "fa-snowflake", color: "text-cyan-300", href: "https://claude.ai/artifact/GpRJjBHW5mnZmJhvH3Cv8i", ext: true,
               desc: "討論稿頁面。", src: "" },
-        ]
-    },
-    {
-        title: "待補", icon: "fa-hourglass-half", color: "text-slate-400",
-        note: "網址或清單補齊後再加入。",
-        items: [
-            { name: "太陽能監測儀表板", icon: "fa-sun", color: "text-yellow-400", pending: "網址待 Cliff 提供",
-              desc: "T-REC 四組 PV 電表（solar-dashboard，Streamlit）。", src: "repo tsaitzuchien-star/solar-dashboard" },
         ]
     },
 ];
