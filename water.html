@@ -70,9 +70,14 @@ function render() {
     const S = W.status || {}, B = W.baseline || {};
     const days = W.days || [];
     const used = days.filter(d => d.use != null);
-    const last = used[used.length - 1];
+    const lastFull = used[used.length - 1];
+    const tail = days[days.length - 1];
+    // 最新一天還沒有隔天 00 時 → 用 00→23 時的部分用量（台水每天凌晨才上傳前一天逐時指針）
+    const last = tail && tail.use == null && tail.up != null ? Object.assign({}, tail, { use: tail.up, partial: true }) : lastFull;
     const lastNight = days.filter(d => d.night != null).slice(-1)[0];
-    document.getElementById("upd").textContent = `整理 ${W.updated}・水表資料至 ${W.data_until || "—"}`;
+    const LR = W.latest_reading;
+    const lrTxt = LR ? `${md(LR.date)} ${String(LR.hour).padStart(2, "0")} 時` : (W.data_until || "—");
+    document.getElementById("upd").textContent = `整理 ${W.updated}・水表資料至 ${lrTxt}（台水每天凌晨上傳前一天逐時資料）`;
 
     const alerts = W.alerts || [];
     const real = alerts.filter(a => a.level !== "info");
@@ -96,8 +101,8 @@ function render() {
     document.getElementById("app").innerHTML = `
     <div class="grid grid-cols-1 gap-3">${banner}</div>
     <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 md:gap-6">
-        ${tile(`最近一天 ${last ? md(last.d) + "（" + wk(last.d) + "）" : ""}`, last ? fmt(last.use) : "—", "度",
-            `${last && last.off ? "假日" : "上班日"}基線 ${fmt(lastBase)} 度・台水估算量 ${last ? fmt(last.est) : "—"}`, "border-l-cyan-400")}
+        ${tile(`最近一天 ${last ? md(last.d) + "（" + wk(last.d) + "）" + (last.partial ? ` 00–${String(last.ut).padStart(2, "0")} 時` : "") : ""}`, last ? fmt(last.use) : "—", "度",
+            `${last && last.off ? "假日" : "上班日"}基線 ${fmt(lastBase)} 度${last && last.partial ? "・最後 1 小時待隔天資料" : "・台水估算量 " + (last ? fmt(last.est) : "—")}`, "border-l-cyan-400")}
         ${tile("近 7 天合計", fmt(r7), "度", wb ? `基線 ${fmt(wb)} 度（${r7pct >= 0 ? "+" : ""}${fmt(r7pct)}%）` : "基線累積中（需 4 週以上）", "border-l-sky-400", r7cls)}
         ${tile(`夜間 00–06 時 ${lastNight ? md(lastNight.d) : ""}`, lastNight ? fmt(lastNight.night) : "—", "度",
             lastNight && lastNight.nm ? "每一段指針都在走，留意是否連續" : "0–1 度屬正常（整數度進位）", "border-l-indigo-400", nCls)}
