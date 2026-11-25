@@ -1,11 +1,13 @@
 {
-  "id": "2026-11-24-xiemqd-pr92-hub",
+  "id": "2026-11-25-k32-pr95-ice15-iboffset",
   "requested_by": "Cliff Tsai",
-  "approved_at": "2026-11-24T16:44:54+08:00",
-  "expires": "2026-11-24T23:59:00+08:00",
-  "note": "PR #92：總覽頁成果卡改連依 02 總表更新的新版、拿掉警示（hub.html）；Cliff 2026-11-24 16:44「好」",
-  "sha": "cb102e42c63e8ae84c758c0adac8f58e2063f665",
+  "approved_at": "2026-11-25T15:58:05+08:00",
+  "expires": "2026-11-25T23:58:00+08:00",
+  "note": "PR #95：冰桶15 驗收通過移除故障標示（index.html、ems_calc.py）＋指令信箱加入冰桶液位校正 iboffset（sched_cmd.ps1）；Cliff 2026-11-25 15:58「執行」",
+  "sha": "c967d8ed1ecc06ba15c00203e00aed18f36b9b80",
   "files": [
-    { "pc": "bms", "file": "hub.html" }
+    { "pc": "ac", "file": "tools/sched_cmd.ps1" },
+    { "pc": "bms", "file": "index.html" },
+    { "pc": "bms", "file": "tools/ems_calc.py" }
   ]
 }
